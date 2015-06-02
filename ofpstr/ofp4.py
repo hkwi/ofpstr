@@ -416,7 +416,7 @@ def str2mod(s, cmd=OFPFC_ADD):
 	
 	inst = info.get("inst", b"")
 	
-	return struct.pack("!BBHIQQBBHHHIIIH2x", 4, OFPT_FLOW_MOD, 48+length+len(inst), 0,
+	return struct.pack("!BBHIQQBBHHHIIIH2x", 4, OFPT_FLOW_MOD, 48+align8(length)+len(inst), 0,
 		info.get("cookie", 0),
 		info.get("cookie_mask", 0),
 		info.get("table", 0),
