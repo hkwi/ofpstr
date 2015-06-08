@@ -34,6 +34,7 @@ class TestRoundTrip(unittest.TestCase):
 		"idle_timeout=10",
 		"hard_timeout=4",
 		"@metadata=0x1,@meter=3,@apply,@clear,@write,@goto=5",
+		"dot11=1,dot11_frame_ctrl=40/ff,@apply,output=controller",
 		"table=1,priority=10,in_port=1,@apply,output=controller,@goto=2",
 		"cookie=0x1/0xf,priority=4,buffer=0x1,idle_timeout=300,hard_timeout=300,vlan_vid=0x1,@apply,set_vlan_vid=0x2,output=3,@goto=3",
 		)
