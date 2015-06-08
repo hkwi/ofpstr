@@ -930,7 +930,7 @@ def oxm2str(msg, loop=True):
 def str2oxm(unparsed, loop=True):
 	step = 0
 	msg = b""
-	while loop:
+	while True:
 		try:
 			lead, key, op, payload = get_unit(unparsed[step:])
 			b,p = _str2bin[key](payload)
@@ -940,6 +940,9 @@ def str2oxm(unparsed, loop=True):
 			msg += b
 			step += len(lead)+len(key)+len(op)+p
 		except:
+			break
+		
+		if not loop:
 			break
 	
 	return msg, step
