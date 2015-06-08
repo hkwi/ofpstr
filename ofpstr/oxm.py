@@ -927,7 +927,19 @@ def oxm2str(msg, loop=True):
 	return ",".join(tokens)
 
 
-def str2oxm(unparsed):
-	lead, key, op, payload = get_unit(unparsed)
-	b,p = _str2bin[key](payload)
-	return b, len(lead)+len(key)+len(op)+p
+def str2oxm(unparsed, loop=True):
+	step = 0
+	msg = b""
+	while loop:
+		try:
+			lead, key, op, payload = get_unit(unparsed[step:])
+			b,p = _str2bin[key](payload)
+			if not p:
+				break
+			
+			msg += b
+			step += len(lead)+len(key)+len(op)+p
+		except:
+			break
+	
+	return msg, step

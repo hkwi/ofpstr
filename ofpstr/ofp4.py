@@ -175,7 +175,7 @@ def str2act(s):
 		b,p = _str2act[name](payload)
 		return bytes(b), len(lead)+len(name)+len(op)+p
 	elif name.startswith("set_"):
-		oxm,p = str2oxm(name[4:]+op+payload)
+		oxm,p = str2oxm(name[4:]+op+payload, loop=False)
 		l = align8(len(oxm)+4)
 		ret = bytearray(l)
 		ret[:4] = struct.pack("!HH", OFPAT_SET_FIELD, l)
@@ -376,7 +376,7 @@ def str2dict(s, defaults={}):
 				ret[name] = port
 				s = s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
 			else:
-				oxm, l = str2oxm(s)
+				oxm, l = str2oxm(s, loop=False)
 				ret["match"] += oxm
 				s = s[l:]
 		elif phase == PHASE_ACTION:
@@ -401,7 +401,7 @@ ofpfc_default = dict(
 	buffer = OFP_NO_BUFFER,
 )
 
-def str2mod(s, cmd=OFPFC_ADD):
+def str2mod(s, cmd=OFPFC_ADD, xid=0):
 	default = ofpfc_default
 	if cmd in (OFPFC_DELETE, OFPFC_DELETE_STRICT):
 		default = ofpfc_del_default
@@ -416,7 +416,7 @@ def str2mod(s, cmd=OFPFC_ADD):
 	
 	inst = info.get("inst", b"")
 	
-	return struct.pack("!BBHIQQBBHHHIIIH2x", 4, OFPT_FLOW_MOD, 48+align8(length)+len(inst), 0,
+	return struct.pack("!BBHIQQBBHHHIIIH2x", 4, OFPT_FLOW_MOD, 48+align8(length)+len(inst), xid,
 		info.get("cookie", 0),
 		info.get("cookie_mask", 0),
 		info.get("table", 0),
