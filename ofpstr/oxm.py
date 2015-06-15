@@ -203,8 +203,9 @@ def port_str2bin(field):
 			return struct.pack("!HBBI", OFPXMC_OPENFLOW_BASIC, field<<1, 4, num)
 		
 		for (v,name) in ofpp.items():
-			if unparsed.startswith(name):
-				return build(v), len(name)
+			for nm in (name.lower(), name.upper()):
+				if unparsed.startswith(nm):
+					return build(v), len(name)
 		
 		v, l = parseInt(unparsed)
 		return build(v), l
