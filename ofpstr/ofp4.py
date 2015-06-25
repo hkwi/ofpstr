@@ -377,6 +377,8 @@ def str2dict(s, defaults={}):
 				s = s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
 			else:
 				oxm, l = str2oxm(s, loop=False)
+				if l == 0:
+					raise ValueError("unknown match {:s}".format(s))
 				ret["match"] += oxm
 				s = s[l:]
 		elif phase == PHASE_ACTION:

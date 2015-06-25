@@ -36,6 +36,7 @@ class TestRoundTrip(unittest.TestCase):
 		"@metadata=0x1,@meter=3,@apply,@clear,@write,@goto=5",
 		"dot11=1,dot11_frame_ctrl=40/ff,@apply,output=controller",
 		"table=1,priority=10,in_port=1,@apply,output=controller,@goto=2",
+		"priority=20,idle_timeout=30,dot11=1,dot11_frame_ctrl=00/0f,dot11_addr2=01:23:45:67:89:01,@apply,output=controller",
 		"cookie=0x1/0xf,priority=4,buffer=0x1,idle_timeout=300,hard_timeout=300,vlan_vid=0x1,@apply,set_vlan_vid=0x2,output=3,@goto=3",
 		)
 	def test_action(self):
