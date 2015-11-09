@@ -383,6 +383,8 @@ def str2dict(s, defaults={}):
 				s = s[l:]
 		elif phase == PHASE_ACTION:
 			act, l = str2act(s)
+			if l == 0:
+				raise ValueError("unknown action {:s}".format(s))
 			actions += act
 			s = s[l:]
 		else:
