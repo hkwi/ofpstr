@@ -19,7 +19,9 @@ class TestRoundTrip(unittest.TestCase):
 		"dec_nw_ttl",
 		"set_vlan_vid=0x10",
 		"push_pbb=0x88e7",
-		"pop_pbb"
+		"pop_pbb",
+		"cnt_ids(0x1,0x2,0x3)",
+#		"learn(nxm_in_port=99,nxm_eth_dst=nxm_eth_src,reg_load(nxm_reg1[16:32],nxm_in_port)",
 		)
 	flows = (
 		"cookie=0x1",
@@ -43,7 +45,7 @@ class TestRoundTrip(unittest.TestCase):
 		for rule in self.actions:
 			msg, length = ofpstr.ofp4.str2act(rule)
 			assert length == len(rule), "{:s} captured {:d}".format(rule, length)
-			assert rule == ofpstr.ofp4.act2str(msg)
+			assert rule == ofpstr.ofp4.act2str(msg), "{0} != {1}".format(rule, ofpstr.ofp4.act2str(msg))
 	
 	def test_mod(self):
 		for flow in self.flows:

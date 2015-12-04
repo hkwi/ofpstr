@@ -1,5 +1,5 @@
 import struct
-from .util import ofpp, parseInt, get_value, get_unit
+from .util import ofpp, parseInt, get_token, parse_func, split
 from .oxm import str2oxm, oxm2str
 
 align8 = lambda x:(x+7)//8*8
@@ -49,13 +49,14 @@ action_names = {
 	24: "dec_nw_ttl",
 	25: "set_field",
 	26: "push_pbb",
-	27: "pop_pbb"
+	27: "pop_pbb",
+	0xffff: "experimenter",
 }
 for n,name in action_names.items():
 	globals()["OFPAT_{:s}".format(name.upper())] = n
 
 def action_generic_str2act(ofpat):
-	def str2act(payload):
+	def str2act(payload, readarg):
 		return struct.pack("!HH4x", ofpat, 8), 0
 	return str2act
 
@@ -66,11 +67,13 @@ def action_generic_act2str(name):
 	return act2str
 
 def action_uint_str2act(ofpat, pack):
-	def str2act(unparsed):
-		num,l = parseInt(unparsed)
+	def str2act(unparsed, readarg):
+		h,b,unparsed = get_token(unparsed)
+		num,l = parseInt(b)
+		assert l==len(b)
 		value = struct.pack(pack, num)
-		return struct.pack("!HH", ofpat, 4+len(value))+value, l
-	
+		return struct.pack("!HH", ofpat, 4+len(value))+value, len(h)+len(b)
+
 	return str2act
 
 def action_uint_act2str(fmt, pack):
@@ -78,10 +81,10 @@ def action_uint_act2str(fmt, pack):
 		return fmt.format(*struct.unpack_from(pack, payload))
 	return act2str
 
-def action_output_str2act(unparsed):
-	sp,v,ext,m = get_value(unparsed)
-	assert ext is None
-	ps = v.split(":", 2)
+def action_output_str2act(unparsed, readarg):
+	h,b,unparsed = get_token(unparsed)
+	assert b.find("/")<0
+	ps = b.split(":", 2)
 	port = None
 	for num,name in ofpp.items():
 		if name == ps[0]:
@@ -89,13 +92,13 @@ def action_output_str2act(unparsed):
 	if port is None:
 		port,l = parseInt(ps[0])
 		assert len(ps[0]) == l
-	
+
 	maxLen = OFPCML_NO_BUFFER
 	if len(ps) > 1:
 		maxLen,l = parseInt(ps[1])
 		assert len(ps[1]) == l
-	
-	return struct.pack("!HHIH6x", OFPAT_OUTPUT, 16, port, maxLen), len(sp)+len(v)
+
+	return struct.pack("!HHIH6x", OFPAT_OUTPUT, 16, port, maxLen), len(h) + len(b)
 
 def action_output_act2str(payload):
 	(port,maxLen) = struct.unpack("!IH6x", payload)
@@ -106,9 +109,10 @@ def action_output_act2str(payload):
 		return "output={:s}:{:#x}".format(name, maxLen)
 
 def action_push_str2act(ofpat):
-	def str2act(unparsed):
-		num, l = parseInt(unparsed)
-		return struct.pack("!HHH2x", ofpat, 8, num), l
+	def str2act(unparsed, readarg):
+		h,b,unparsed = get_token(unparsed)
+		num, l = parseInt(b)
+		return struct.pack("!HHH2x", ofpat, 8, num), len(h)+len(b)
 	return str2act
 
 def action_push_act2str(name):
@@ -116,6 +120,111 @@ def action_push_act2str(name):
 		num = struct.unpack_from("!H", payload)[0]
 		return "{:s}={:#06x}".format(name, num)
 	return act2str
+
+NX_VENDOR_ID = 0x00002320
+
+class nxast(int):
+	def __hash__(self):
+		return hash((NX_VENDOR_ID, int(self)))
+
+nxast_names = {
+	21: "cnt_ids", # DEC_TTL_CNT_IDS; controller ids to packet-in
+	7: "reg_load",
+	33: "reg_load2",
+	6: "reg_move",
+	1: "resubmit",
+	14: "resubmit_table",
+	2: "set_tunnel",
+	9: "set_tunnel64",
+	5: "pop_queue",
+	8: "note",
+	10: "multipath",
+	12: "bundle",
+	13: "bundle_load",
+	15: "output_reg",
+	32: "output_reg2",
+	16: "learn",
+	17: "exit",
+	19: "fin_timeout",
+	20: "controller",
+	22: "write_metadata",
+	27: "stack_push",
+	28: "stack_pop",
+	29: "sample",
+	34: "conjunction"
+}
+for n,name in nxast_names.items():
+	globals()["NXAST_{:s}".format(name.upper())] = nxast(n)
+
+def _pad8(bin):
+	l = (len(bin)+7)//8*8
+	return bin+bytes(bytearray(l-len(bin)))
+
+def _nxast_hdr(subtype):
+	return struct.pack("!HHIH", OFPAT_EXPERIMENTER, 10, NX_VENDOR_ID, subtype)
+
+def _fix_act_len(bin):
+	if len(bin) == struct.unpack_from("!H", bin, 2):
+		return bin
+	return bin[0:2]+struct.pack("!H", len(bin))+bin[4:]
+
+def _field_bits(nojunk):
+	''' dst_oxmid, ofs_nbits '''
+	name,start,end = parse_bits(nojunk)
+	if start is None:
+		start = 0
+	else:
+		assert start < end
+	
+	return str2oxmid(name), (start<<6) + (end-start+1)
+
+def action_cnt_ids_str2act(unparsed, readarg):
+	if readarg:
+		op,value,unparsed = get_token(unparsed)
+		assert op.find("=")>=0
+		ids = value.split(":")
+		length = len(op)+len(value)
+	else:
+		ids = split(unparsed)
+		length = 0
+	ids = map(lambda x: parseInt(x)[0], ids)
+	return _fix_act_len(_pad8(
+		_nxast_hdr(NXAST_CNT_IDS)+struct.pack("!H4x{:d}H".format(len(ids)), len(ids), *ids))
+		), length
+
+def action_cnt_ids_act2str(payload):
+	num = struct.unpack_from("!H", payload)[0]
+	return "cnt_ids({:s})".format(",".join(map(lambda x: "{:#x}".format(x), struct.unpack_from("!{:d}H".format(num), payload, 6))))
+
+def action_reg_load_str2act(subtype):
+	hdr = _nxast_hdr(subtype)
+	def str2act(unparsed, readarg):
+		if readarg:
+			h,b,unparsed = get_token(unparsed)
+			vm = b.split(":")
+		else:
+			vm = split(unparsed)
+		assert len(vm) == 2
+		if vm[0]:
+			src = parseInt(vm[0])
+		else:
+			src = 0
+		
+		dst, _field_bits(vm[1])
+	return str2act
+
+#
+# cnt_ids=id1:id2:id3
+# reg_load=0xFE:eth_dst[0:2]
+# reg_load2=0xFE:dot11_addr1[0:2]
+# reg_move=eth_dst[0:2]:eth_src[0:2]
+# reg_move=nxm_reg0[0:4]:nxm_reg1[0:4]
+# resubmit=in_port
+# resubmit_table=in_port:all
+# set_tunnel=0xff
+# pop_queue
+#
+
 
 _str2act = {}
 _act2str = {}
@@ -168,39 +277,59 @@ _act2str[OFPAT_PUSH_PBB] = action_push_act2str("push_pbb")
 _str2act["pop_pbb"] = action_generic_str2act(OFPAT_POP_PBB)
 _act2str[OFPAT_POP_PBB] = action_generic_act2str("pop_pbb")
 
+_str2act["cnt_ids"] = action_cnt_ids_str2act
+_act2str[NXAST_CNT_IDS] = action_cnt_ids_act2str
+
 def str2act(s):
-	lead, name, op, payload = get_unit(s)
-	
-	if name in _str2act:
-		b,p = _str2act[name](payload)
-		return bytes(b), len(lead)+len(name)+len(op)+p
+	h,name,arg = get_token(s)
+	fname,farg = parse_func(name)
+
+	if farg and fname in _str2act:
+		b,p = _str2act[fname](farg, False)
+		return bytes(b), len(h)+len(name)
+	elif name in _str2act:
+		b,p = _str2act[name](arg, True)
+		return bytes(b), len(h)+len(name)+p
 	elif name.startswith("set_"):
-		oxm,p = str2oxm(name[4:]+op+payload, loop=False)
+		if farg:
+			op,payload,s = get_token(farg)
+			oxm,p = str2oxm(fname[4:]+"="+payload, loop=False)
+		else:
+			op,payload,s = get_token(arg)
+			oxm,p = str2oxm(name[4:]+op+payload, loop=False)
+
 		l = align8(len(oxm)+4)
 		ret = bytearray(l)
 		ret[:4] = struct.pack("!HH", OFPAT_SET_FIELD, l)
 		ret[4:4+len(oxm)] = oxm
-		return bytes(ret), len(lead)+4+p
+		return bytes(ret), len(h)+4+p
 	else:
-		return b"", len(lead)
+		return b"", len(h)
 
 def act2str(msg, loop=True):
 	tokens = []
 	while len(msg) > 4:
 		(atype,l) = struct.unpack_from("!HH", msg)
+		offset = 4
+		if atype == OFPAT_EXPERIMENTER:
+			vendor = struct.unpack_from("!I", msg, 4)[0]
+			if vendor == NX_VENDOR_ID:
+				atype = nxast(struct.unpack_from("!H", msg, 8)[0])
+				offset = 10
+
 		act = _act2str.get(atype)
 		if atype == OFPAT_SET_FIELD:
 			tokens.append("set_"+oxm2str(msg[4:], loop=False))
 		elif act:
-			tokens.append(act(msg[4:l]))
+			tokens.append(act(msg[offset:l]))
 		else:
 			tokens.append("?")
-		
+
 		if loop:
 			msg = msg[l:]
 		else:
 			break
-	
+
 	return ",".join(tokens)
 
 instruction_names = {
@@ -249,12 +378,12 @@ def inst2str(msg, loop=True):
 			tokens.append("@meter={:d}".format(*struct.unpack_from("!I", msg, 4)))
 		else:
 			tokens.append("?")
-		
+
 		if loop:
 			msg = msg[l:]
 		else:
 			break
-	
+
 	return ",".join(tokens)
 
 PHASE_MATCH = 0
@@ -268,130 +397,121 @@ def str2dict(s, defaults={}):
 		match= b"",
 		inst= b"",
 	))
-	
+
 	actions = b""
 	def inst_action(atype):
 		def func():
 			ret["inst"] += struct.pack("!HH4x", atype, 8+len(actions))+actions
 		return func
-	
+
 	func = None
 	phase = PHASE_MATCH
 	while len(s) > 0:
-		lead, name, op, unparsed = get_unit(s)
+		h,name,s = get_token(s)
+		assert h.find("=")<0
 		if name.startswith("@"):
 			if func is not None:
 				func()
-			
+
 			func = None
 			phase = PHASE_NOARG
 			if name in ("@goto", "@goto_table"):
-				assert len(op), "goto requires arg"
-				sp,v,ext,m = get_value(unparsed)
-				assert ext == None
-				num,l = parseInt(v)
-				assert l == len(v)
+				op,payload,s = get_token(s)
+				assert op.find("=")>=0, "goto requires arg"
+				num,l = parseInt(payload)
+				assert l == len(payload)
 				ret["inst"] += struct.pack("!HHB3x", OFPIT_GOTO_TABLE, 8, num)
-				s = s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
 			elif name in ("@metadata", "@write_metadata"):
-				assert len(op), "metadata requires arg"
-				sp,v,ext,m = get_value(unparsed)
-				num,l = parseInt(v)
-				assert l == len(v)
-				if ext is None:
-					ret["inst"] += struct.pack("!HH4xQQ", OFPIT_WRITE_METADATA, 24, num, 0)
-					s = s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
-				else:
-					mask,l = parseInt(m)
-					assert l == len(m)
+				op,payload,s = get_token(s)
+				assert op.find("=")>=0, "metadata requires arg"
+				vm = payload.split("/", 1)
+				num,l = parseInt(vm[0])
+				assert l == len(vm[0])
+				if len(vm) > 1:
+					mask,l = parseInt(vm[1])
+					assert l == len(vm[1])
 					ret["inst"] += struct.pack("!HH4xQQ", OFPIT_WRITE_METADATA, 24, num, mask)
-					s = s[len(lead)+len(name)+len(op)+len(sp)+len(v)+len(ext):]
+				else:
+					ret["inst"] += struct.pack("!HH4xQQ", OFPIT_WRITE_METADATA, 24, num, 0)
 			elif name in ("@apply", "@apply_actions"):
 				func = inst_action(OFPIT_APPLY_ACTIONS)
 				actions = b""
 				phase = PHASE_ACTION
-				s = s[len(lead)+len(name):]
 			elif name in ("@write", "@write_actions"):
 				func = inst_action(OFPIT_WRITE_ACTIONS)
 				actions = b""
 				phase = PHASE_ACTION
-				s = s[len(lead)+len(name):]
 			elif name in ("@clear", "@clear_actions"):
 				ret["inst"] += struct.pack("!HH4x", OFPIT_CLEAR_ACTIONS, 8)
-				s = s[len(lead)+len(name):]
 			elif name == "@meter":
-				assert len(op)
-				sp,v,ext,m = get_value(unparsed)
-				assert ext == None
-				num,l = parseInt(v)
-				assert l == len(v)
+				op,payload,s = get_token(s)
+				assert op.find("=")>=0, "metadata requires arg"
+				assert payload.find("/") < 0, "meter does not take mask"
+				num,l = parseInt(payload)
+				assert l == len(payload)
 				ret["inst"] += struct.pack("!HHI", OFPIT_METER, 8, num)
-				s = s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
 			else:
 				raise ValueError("unknown {:s}".format(name))
 		elif phase == PHASE_MATCH:
 			def proc(field):
-				sp,v,ext,m = get_value(unparsed)
-				assert ext is None
-				num,l = parseInt(v)
-				assert len(v) == l
+				op,payload,unparsed = get_token(s)
+				assert op.find("=")>=0 and payload.find("/")<0
+				num,l = parseInt(payload)
+				assert len(payload) == l
 				ret[field] = num
-				return s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
-			
+				return unparsed
+
 			if name in ("table", "priority", "idle_timeout", "hard_timeout", "buffer"):
 				s = proc(name)
 			elif name == "cookie":
-				sp,v,ext,m = get_value(unparsed)
-				num,l = parseInt(v)
-				assert len(v) == l
+				op,payload,s = get_token(s)
+				assert op.find("=")>=0, "cookie take value"
+				vm = payload.split("/", 1)
+				num,l = parseInt(vm[0])
+				assert len(vm[0]) == l
 				ret[name] = num
-				if ext is not None:
-					num,l = parseInt(m)
+				if len(vm) > 1:
+					num,l = parseInt(vm[1])
 					ret["cookie_mask"] = num
-					s = s[len(lead)+len(name)+len(op)+len(sp)+len(v)+len(ext):]
-				else:
-					s = s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
 			elif name == "out_port":
-				sp,v,ext,m = get_value(unparsed)
-				assert ext is None
+				op,payload,s = get_token(s)
+				assert op.find("=") >= 0 and payload.find("/") < 0
 				port = None
 				for num,pname in ofpp.items():
-					if v == pname:
+					if pname == payload:
 						port = num
 				if port is None:
-					port,l = parseInt(v)
-					assert l == len(v)
+					port,l = parseInt(payload)
+					assert l == len(payload)
 				ret[name] = port
-				s = s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
 			elif name == "out_group":
-				sp,v,ext,m = get_value(unparsed)
-				assert ext is None
+				op,payload,s = get_token(s)
+				assert op.find("=")>=0 and payload.find("/")<0
 				port = None
 				for num,gname in ofpg.items():
-					if v == gname:
+					if gname == payload:
 						port = num
 				if port is None:
-					port,l = parseInt(v)
-					assert l == len(v)
+					port,l = parseInt(payload)
+					assert l == len(payload)
 				ret[name] = port
-				s = s[len(lead)+len(name)+len(op)+len(sp)+len(v):]
 			else:
-				oxm, l = str2oxm(s, loop=False)
+				oxm, l = str2oxm(name+s, loop=False)
 				if l == 0:
 					raise ValueError("unknown match {:s}".format(s))
 				ret["match"] += oxm
-				s = s[l:]
+				s = (name+s)[l:]
 		elif phase == PHASE_ACTION:
-			act, l = str2act(s)
+			act, l = str2act(name+s)
 			if l == 0:
 				raise ValueError("unknown action {:s}".format(s))
 			actions += act
-			s = s[l:]
+			s = (name+s)[l:]
 		else:
 			raise ValueError("invalid syntax")
 	if func:
 		func()
-	
+
 	return ret
 
 
@@ -409,17 +529,17 @@ def str2mod(s, cmd=OFPFC_ADD, xid=0):
 	default = ofpfc_default
 	if cmd in (OFPFC_DELETE, OFPFC_DELETE_STRICT):
 		default = ofpfc_del_default
-	
+
 	info = str2dict(s, default)
-	
+
 	OFPMT_OXM = 1
 	oxm = info.get("match", b"")
 	length = 4 + len(oxm)
 	match = struct.pack("!HH", OFPMT_OXM, length) + oxm
 	match += b"\0" * (align8(length)-length)
-	
+
 	inst = info.get("inst", b"")
-	
+
 	return struct.pack("!BBHIQQBBHHHIIIH2x", 4, OFPT_FLOW_MOD, 48+align8(length)+len(inst), xid,
 		info.get("cookie", 0),
 		info.get("cookie_mask", 0),
@@ -448,53 +568,53 @@ def mod2str(msg):
 	flags,
 	match_type,
 	match_length) = struct.unpack_from("!BBHIQQBBHHHIIIH2xHH", msg)
-	
+
 	default = ofpfc_default
 	if cmd in (OFPFC_DELETE, OFPFC_DELETE_STRICT):
 		default = ofpfc_del_default
-	
+
 	ret = []
 	if cookie_mask != 0:
 		ret.append("cookie={:#x}/{:#x}".format(cookie, cookie_mask))
 	elif cookie != 0:
 		ret.append("cookie={:#x}".format(cookie))
-	
+
 	if table != default.get("table", 0):
 		ret.append("table={:d}".format(table))
-	
+
 	if priority != 0:
 		ret.append("priority={:d}".format(priority))
-	
+
 	if buffer_id != default.get("buffer", 0):
 		ret.append("buffer={:#x}".format(buffer_id))
-	
+
 	if out_port != default.get("out_port", 0):
 		if out_port in ofpp:
 			ret.append("out_port={:s}".format(ofpp[out_port]))
 		else:
 			ret.append("out_port={:d}".format(out_port))
-	
+
 	if out_group != default.get("out_group", 0):
 		if out_group in ofpg:
 			ret.append("out_group={:s}".format(ofpg[out_group]))
 		else:
 			ret.append("out_group={:d}".format(out_group))
-	
+
 	if idle_timeout != 0:
 		ret.append("idle_timeout={:d}".format(idle_timeout))
-	
+
 	if hard_timeout != 0:
 		ret.append("hard_timeout={:d}".format(hard_timeout))
-	
+
 	if match_type == OFPMT_OXM:
 		rstr = oxm2str(msg[52:52+match_length-4])
 		if len(rstr):
 			ret.append(rstr)
 	else:
 		raise ValueError("match_type {:d} not supported".format(match_type))
-	
+
 	istr = inst2str(msg[48+align8(match_length):])
 	if len(istr):
 		ret.append(istr)
-	
+
 	return ",".join(ret)

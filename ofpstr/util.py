@@ -22,15 +22,78 @@ ofpp = {
 def is_delimiter(c):
 	return c in "," or c in string.whitespace
 
-re_value = re.compile(r"^(\s*=?\s*)([^,=/\s]+)(\s*/\s*([^,=/\s]+))?")
-def get_value(unparsed):
-	return re_value.match(unparsed).groups()
+pars = dict(("()", "{}", "[]", "<>"))
+def scan_paren(end):
+	def scan(reader):
+		'''
+		reader is iterator that yields a char
+		@returns payload, right-parenthesis
+		'''
+		payload = ""
+		for c in reader:
+			if c == end:
+				return payload, c
+			else:
+				payload += c
+				if c in pars:
+					p,r = scan_paren(pars[c])(reader)
+					payload += p
+					if r:
+						payload += r
+		return payload, ""
+	return scan
 
+def get_token(unparsed):
+	head = "" # leading non-token string
+	m = re.match("^(\s*=\s*|[\s,]+)", unparsed)
+	if m:
+		head = m.group(1)
+	
+	body = ""
+	reader = iter(unparsed[len(head):])
+	for c in reader:
+		if is_delimiter(c) or c == "=":
+			break
+		body += c
+		if c in pars:
+			p,r = scan_paren(pars[c])(reader)
+			body += p + r
+	
+	return head, body, unparsed[len(head)+len(body):]
 
-re_unit = re.compile(r"^(\s*,?\s*)([^,=\s]+)(\s*=?\s*)(.*)")
-def get_unit(unparsed):
-	return re_unit.match(unparsed).groups()
+def split(unparsed):
+	ret = []
+	while unparsed:
+		h,b,unparsed = get_token(unparsed)
+		if not b:
+			break
+		ret.append(b)
+	return ret
 
+def parse_func(nojunk):
+	'''
+	parses argument is function-style string or not.
+	This checks argument is cleanly closed with parenthesis
+	'''
+	name = ""
+	reader = iter(nojunk)
+	for c in reader:
+		if c in pars:
+			p, r = scan_paren(pars[c])(reader)
+			assert len(nojunk) == len(name)+1+len(p)+len(r)
+			# cleanly closed only if len(r)!=0, should we raise warn here?
+			return name, p
+		else:
+			name += c
+	
+	return name, None
+
+def parse_bits(nojunk):
+	name, args = parse_func(nojunk)
+	if args:
+		ns = map(lambda x: int(x) if len(x) else None, args.split(":", 1))
+		return name, ns[0], ns[1]
+	return name, None, None
 
 def longest(s, char_set):
 	'''returns the maximum continuous length of string, which is made from char_set.'''

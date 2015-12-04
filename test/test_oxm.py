@@ -1,4 +1,5 @@
 import unittest
+import binascii
 import ofpstr.oxm
 
 class TestRoundTrip(unittest.TestCase):
@@ -42,13 +43,35 @@ class TestRoundTrip(unittest.TestCase):
 		"radiotap_ampdu_status=0x12345678:0x1234:0x12:0x12",
 		"radiotap_ampdu_status=:::/0x12345678:0x1234:0x12:0x12",
 		"radiotap_vht=0x1234:0x12:0:12345678:0x12:0:0x0000",
+		"nxm_in_port=any",
+		"nxm_eth_dst=00:11:22:33:44:55",
+		"nxm_eth_src=00:11:22:33:44:55/01:00:00:00:00:00",
+		"nxm_eth_type=0x88a8",
+		"nxm_vlan_tci=0x3001",
+		"nxm_ip_tos=0x10", # IPTOS_LOWDELAY
+		"nxm_ip_proto=6",
+		"nxm_ip_src=192.168.0.1",
+		"nxm_ip_dst=192.168.0.0/255.255.255.0",
+		"nxm_tcp_src=80",
+		"nxm_tcp_dst=8080",
+		"nxm_udp_src=53",
+		"nxm_udp_dst=4789",
+		"nxm_icmp_type=30",
+		"nxm_icmp_code=0",
+		"nxm_arp_op=1",
+		"nxm_arp_spa=192.168.0.1",
+		"nxm_arp_tpa=192.168.0.0/255.255.255.0",
 		)
 	def test_all(self):
 		for rule in self.rules:
 			msg, length = ofpstr.oxm.str2oxm(rule)
-			assert length == len(rule)
-			assert rule == ofpstr.oxm.oxm2str(msg)
-
+			assert length == len(rule), "length {0}!={1} {2}".format(length, len(rule), rule)
+			assert rule == ofpstr.oxm.oxm2str(msg), "{0}!={1} {2}".format(rule, ofpstr.oxm.oxm2str(msg), binascii.b2a_hex(msg))
+	
+	def test_id(self):
+		for rule in self.rules:
+			oxmid = ofpstr.oxm.str2oxmid(rule.split("=")[0])
+			assert len(oxmid) in (4, 8)
 
 if __name__ == "__main__":
 	unittest.main()

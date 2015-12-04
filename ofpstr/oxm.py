@@ -3,7 +3,7 @@ import re
 import socket
 import binascii
 
-from .util import get_value, get_unit, parseInt, parseFloat, ofpp
+from .util import get_token, parseInt, parseFloat, ofpp
 
 try:
 	L0 = long(0)
@@ -11,7 +11,10 @@ except:
 	L0 = 0
 	long = int
 
+OFPXMC_NXM_0 = 0x0000
+OFPXMC_NXM_1 = 0x0001
 OFPXMC_OPENFLOW_BASIC = 0x8000
+OFPXMC_PACKET_REGS = 0x8001
 OFPXMC_EXPERIMENTER = 0xFFFF
 
 ofb_names = '''in_port
@@ -63,21 +66,84 @@ for (i,n) in enumerate(ofb_names):
 	if n != "_":
 		globals()["OXM_OF_{:s}".format(n.upper())] = i
 
+class nxm_of(int):
+	def __hash__(self):
+		return hash((0, int(self)))
+
+nxm0_names = '''in_port
+	eth_dst
+	eth_src
+	eth_type
+	vlan_tci
+	ip_tos
+	ip_proto
+	ip_src
+	ip_dst
+	tcp_src
+	tcp_dst
+	udp_src
+	udp_dst
+	icmp_type
+	icmp_code
+	arp_op
+	arp_spa
+	arp_tpa'''.split()
+for (i, n) in enumerate(nxm0_names):
+	if n != "_":
+		globals()["NXM_OF_{:s}".format(n.upper())] = nxm_of(i)
+
+class nxm_nx(int):
+	def __hash__(self):
+		return hash((1, int(self)))
+
+nxm1_names = '''reg0
+	reg1
+	reg2
+	reg3
+	reg4
+	reg5
+	reg6
+	reg7
+	_ _ _ _ _ _ _ _
+	tun_id
+	arp_sha
+	arp_tha
+	ipv6_src
+	ipv6_dst
+	icmpv6_type
+	icmpv6_code
+	nd_target
+	nd_sll
+	nd_tll
+	ip_frag
+	ipv6_label
+	ip_ecn
+	ip_ttl
+	_
+	tun_ipv4_src
+	tun_ipv4_dst
+	pkt_mark
+	tcp_flags
+	dp_hash
+	recirc_id
+	conj_id
+	tun_gbp_id
+	tun_gbp_flags'''.split()
+for (i, n) in enumerate(nxm1_names):
+	if n != "_":
+		globals()["NXM_NX_{:s}".format(n.upper())] = nxm_nx(i)
+assert NXM_NX_TUN_GBP_FLAGS==39
 
 STRATOS_EXPERIMENTER_ID = 0xFF00E04D
 
 STRATOS_OXM_FIELD_BASIC = 0
 STRATOS_OXM_FIELD_RADIOTAP = 1
 
-class stratos_basic(int):
+class stratos(int):
 	def __hash__(self):
-		return hash((STRATOS_OXM_FIELD_BASIC, int(self)))
+		return hash((OFPXMC_EXPERIMENTER, STRATOS_EXPERIMENTER_ID, int(self)))
 
-class stratos_radiotap(int):
-	def __hash__(self):
-		return hash((STRATOS_OXM_FIELD_RADIOTAP, int(self)))
-
-stratos_names = '''unknown
+stratos_names = '''_ _
 	dot11
 	dot11_frame_ctrl
 	dot11_addr1
@@ -88,12 +154,8 @@ stratos_names = '''unknown
 	dot11_action_category
 	dot11_public_action
 	dot11_tag
-	dot11_tag_vendor'''.split()
-for (i,n) in enumerate(stratos_names):
-	if n != "_":
-		globals()["STROXM_BASIC_{:s}".format(n.upper())] = stratos_basic(i)
-
-radiotap_names = '''
+	dot11_tag_vendor
+	_ _ _
 	tsft
 	flags
 	rate
@@ -116,23 +178,40 @@ radiotap_names = '''
 	mcs
 	ampdu_status
 	vht'''.split()
-for (i,n) in enumerate(radiotap_names):
+for (i,n) in enumerate(stratos_names):
 	if n != "_":
-		globals()["STROXM_RADIOTAP_{:s}".format(n.upper())] = stratos_radiotap(i)
+		if i < 16:
+			vname = "STROXM_BASIC_{:s}".format(n.upper())
+		else:
+			vname = "STROXM_RADIOTAP_{:s}".format(n.upper())
+		globals()[vname] = stratos(i)
+assert STROXM_RADIOTAP_VHT == 37
 
 
 _bin2str = {}
 _str2bin = {}
 
-def header(field_or_etype):
-	if isinstance(field_or_etype, stratos_basic):
-		return struct.pack("!HBBIH", OFPXMC_EXPERIMENTER, STRATOS_OXM_FIELD_BASIC<<1, 0,
-			STRATOS_EXPERIMENTER_ID, field_or_etype)
-	elif isinstance(field_or_etype, stratos_radiotap):
-		return struct.pack("!HBBIH", OFPXMC_EXPERIMENTER, STRATOS_OXM_FIELD_RADIOTAP<<1, 0,
-			STRATOS_EXPERIMENTER_ID, field_or_etype)
+
+def header(field, value_length, mask):
+	length = value_length
+	field_HM = field<<1
+	if mask:
+		field_HM += 1
+		length *= 2
+	if isinstance(field, stratos):
+		length += 4
+	
+	if length > 0xff:
+		length = 0xff
+	
+	if isinstance(field, stratos):
+		return struct.pack("!HBBI", OFPXMC_EXPERIMENTER, field_HM, length, STRATOS_EXPERIMENTER_ID)
+	elif isinstance(field, nxm_of):
+		return struct.pack("!HBB", OFPXMC_NXM_0, field_HM, length)
+	elif isinstance(field, nxm_nx):
+		return struct.pack("!HBB", OFPXMC_NXM_1, field_HM, length)
 	else:
-		return struct.pack("!HBB", OFPXMC_OPENFLOW_BASIC, (field_or_etype<<1), 0)
+		return struct.pack("!HBB", OFPXMC_OPENFLOW_BASIC, field_HM, length)
 
 
 def uint_bin2str(fmt):
@@ -159,27 +238,26 @@ def uint_bin2str(fmt):
 	return bin2str
 
 
-def uint_str2bin(field_or_etype, size):
-	hdr = header(field_or_etype)
+def uint_str2bin(field, size):
 	def str2bin(unparsed):
-		ret = bytearray(hdr)
-		
-		num,l = parseInt(unparsed)
-		for s in reversed(range(size)):
-			ret.append(0xFF & (num>>(8*s)))
-		
-		if unparsed[l:].startswith("/"):
-			num,e = parseInt(unparsed[l+1:])
+		rlen = 0
+		has_mask = False
+		payload = b""
+		if isinstance(unparsed, str):
+			num,rlen = parseInt(unparsed)
 			for s in reversed(range(size)):
-				ret.append(0xFF & (num>>(8*s)))
+				payload += chr(0xFF & (num>>(8*s)))
 			
-			l += e + 1
-			ret[2] |= 1
-			ret[3] = len(hdr) - 4 + size * 2
-		else:
-			ret[3] = len(hdr) - 4 + size
+			if unparsed[rlen:].startswith("/"):
+				has_mask = True
+				num,e = parseInt(unparsed[rlen+1:])
+				for s in reversed(range(size)):
+					payload += chr(0xFF & (num>>(8*s)))
+				rlen += 1 + e
+		elif unparsed:
+			has_mask = True
 		
-		return bytes(ret), l
+		return header(field, size, has_mask)+payload, rlen
 	
 	return str2bin
 
@@ -199,16 +277,20 @@ def port_bin2str(name):
 
 def port_str2bin(field):
 	def str2bin(unparsed):
-		def build(num):
-			return struct.pack("!HBBI", OFPXMC_OPENFLOW_BASIC, field<<1, 4, num)
+		rlen = 0
+		payload = b""
+		if isinstance(unparsed, str):
+			num = None
+			for (v,name) in ofpp.items():
+				for nm in (name.lower(), name.upper()):
+					if unparsed.startswith(nm):
+						num = v
+						rlen = len(name)
+			if num is None:
+				num, rlen = parseInt(unparsed)
+			payload = struct.pack("!I", num)
 		
-		for (v,name) in ofpp.items():
-			for nm in (name.lower(), name.upper()):
-				if unparsed.startswith(nm):
-					return build(v), len(name)
-		
-		v, l = parseInt(unparsed)
-		return build(v), l
+		return header(field, 4, False)+payload, rlen
 	
 	return str2bin
 
@@ -226,32 +308,35 @@ def mac_bin2str(name):
 	return bin2str
 
 
-def mac_str2bin(field_or_etype):
-	hdr = header(field_or_etype)
+def mac_str2bin(field):
+	def scan(txt):
+		for r,l in (("([0-9A-Fa-f]{12})", 12),
+				(".".join(["([0-9A-Fa-f]{4})"]*3), 14),
+				(":".join(["([0-9A-Fa-f]{2})"]*6), 17),
+				("-".join(["([0-9A-Fa-f]{2})"]*6), 17)):
+			m = re.match("^"+r, txt)
+			if m:
+				return "".join(m.groups()), l
+		
+		raise ValueError("mac format error {:s}".format(txt))
+	
 	def str2bin(unparsed):
-		ret = bytearray(hdr)
+		rlen = 0
+		payload = b""
+		has_mask = False
+		if isinstance(unparsed, str):
+			value, rlen = scan(unparsed)
+			if unparsed[rlen:].startswith("/"):
+				mask, l = scan(unparsed[rlen+1:])
+				rlen += 1+l
+				payload = binascii.a2b_hex(value+mask)
+				has_mask = True
+			else:
+				payload = binascii.a2b_hex(value)
+		elif unparsed:
+			has_mask = True
 		
-		def scan(txt):
-			for r,l in (("([0-9A-Fa-f]{12})", 12),
-					(".".join(["([0-9A-Fa-f]{4})"]*3), 14),
-					(":".join(["([0-9A-Fa-f]{2})"]*6), 17),
-					("-".join(["([0-9A-Fa-f]{2})"]*6), 17)):
-				m = re.match("^"+r, txt)
-				if m:
-					return "".join(m.groups()), l
-			
-			raise ValueError("mac format error {:s}".format(txt))
-		
-		value, l = scan(unparsed)
-		if unparsed[l:].startswith("/"):
-			mask, l2 = scan(unparsed[l+1:])
-			
-			ret[2] |= 1
-			ret[3] = len(hdr) - 4 + 12
-			return ret+binascii.a2b_hex(value+mask), l+l2+1
-		else:
-			ret[3] = len(hdr) - 4 + 6
-			return ret+binascii.a2b_hex(value), l
+		return header(field, 6, has_mask)+payload, rlen
 	
 	return str2bin
 
@@ -271,18 +356,27 @@ def ipv4_bin2str(name):
 
 def ipv4_str2bin(field):
 	def str2bin(unparsed):
-		lead, v, ext, m = get_value(unparsed)
-		value = socket.inet_aton(v)
-		if ext is not None:
-			try:
-				mask = socket.inet_aton(m)
-			except ValueError:
-				mask_len = int(m)
-				mask = struct.pack("!I", 0xFFFFFFFF<<(32-mask_len))
-			
-			return struct.pack("!HBB", OFPXMC_OPENFLOW_BASIC, (field<<1)+1, 8)+value+mask, len(lead)+len(v)+len(ext)
-		else:
-			return struct.pack("!HBB", OFPXMC_OPENFLOW_BASIC, field<<1, 4)+value, len(lead)+len(v)
+		rlen = 0
+		payload = b""
+		has_mask = False
+		if isinstance(unparsed, str):
+			h, txt, unparsed = get_token(unparsed)
+			vm = txt.split("/", 1)
+			payload = socket.inet_aton(vm[0])
+			if len(vm) > 1:
+				has_mask = True
+				try:
+					mask = socket.inet_aton(vm[1])
+				except ValueError:
+					mask_len = int(vm[1])
+					mask = struct.pack("!I", 0xFFFFFFFF<<(32-mask_len))
+				
+				payload += mask
+			rlen = len(h)+len(txt)
+		elif unparsed:
+			has_mask = True
+		
+		return header(field, 4, has_mask)+payload, rlen
 	
 	return str2bin
 
@@ -302,19 +396,28 @@ def ipv6_bin2str(name):
 
 def ipv6_str2bin(field):
 	def str2bin(unparsed):
-		lead, v, ext, m = get_value(unparsed)
-		value = socket.inet_pton(socket.AF_INET6, v)
-		if ext is not None:
-			try:
-				mask = socket.inet_pton(socket.AF_INET6, m)
-			except:
-				mask_len = int(m)
-				mask_int = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF<<(128-int(mask_len))
-				mask = struct.pack("!QQ", mask_int>>64, mask_int&0xFFFFFFFFFFFFFFFF)
-			
-			return struct.pack("!HBB", OFPXMC_OPENFLOW_BASIC, (field<<1)+1, 32)+value+mask, len(lead)+len(v)+len(ext)
-		else:
-			return struct.pack("!HBB", OFPXMC_OPENFLOW_BASIC, field<<1, 16)+value, len(lead)+len(v)
+		rlen = 0
+		payload = b""
+		has_mask = False
+		if isinstance(unparsed, str):
+			h,txt,unparsed = get_token(unparsed)
+			rlen = len(h)+len(txt)
+			vm = txt.split("/", 1)
+			payload = socket.inet_pton(socket.AF_INET6, vm[0])
+			if len(vm) > 1:
+				has_mask = True
+				try:
+					mask = socket.inet_pton(socket.AF_INET6, vm[1])
+				except:
+					mask_len = int(vm[1])
+					mask_int = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF<<(128-int(mask_len))
+					mask = struct.pack("!QQ", mask_int>>64, mask_int&0xFFFFFFFFFFFFFFFF)
+				
+				payload += mask
+		elif unparsed:
+			has_mask = True
+		
+		return header(field, 16, has_mask)+payload, rlen
 	
 	return str2bin
 
@@ -326,10 +429,17 @@ def pkt_bin2str(payload, has_mask):
 
 
 def pkt_str2bin(unparsed):
-	ns, l = parseInt(unparsed)
-	assert unparsed[l] == ":"
-	ns_type, l2 = parseInt(unparsed[l+1:])
-	return struct.pack("!HBBHH", OFPXMC_OPENFLOW_BASIC, OXM_OF_PACKET_TYPE<<1, 4, ns, ns_type), l+l2+1
+	rlen = 0
+	payload = b""
+	if isinstance(unparsed, str):
+		ns, l = parseInt(unparsed)
+		assert unparsed[l] == ":"
+		ns_type, l2 = parseInt(unparsed[l+1:])
+		
+		rlen = l+l2+1
+		payload = struct.pack("!HH", ns, ns_type)
+	
+	return header(OXM_OF_PACKET_TYPE, 4, False)+payload, rlen
 
 
 def hex_bin2str(name):
@@ -346,26 +456,31 @@ def hex_bin2str(name):
 	return bin2str
 
 
-def hex_str2bin(field_or_etype):
-	hdr = header(field_or_etype)
+def hex_str2bin(field):
 	def str2bin(unparsed):
-		lead, v, ext, m = get_value(unparsed)
-		value = bytearray.fromhex(v)
-		if ext is not None:
-			mask = bytearray.fromhex(m)
-			bl = max(len(value), len(mask))
-			ret = bytearray(len(hdr) + bl*2)
-			ret[:len(hdr)] = hdr
-			ret[2] |= 1
-			ret[3] = len(hdr) - 4 + bl*2
-			ret[len(hdr):] = value + mask
-			return bytes(ret), len(lead)+len(v)+len(ext)
-		else:
-			ret = bytearray(len(hdr)+len(value))
-			ret[:len(hdr)] = hdr
-			ret[3] = len(hdr) - 4 + len(value)
-			ret[len(hdr):] = value
-			return bytes(ret), len(lead)+len(v)
+		rlen = 0
+		payload = b""
+		has_mask = False
+		length = 0xff
+		if isinstance(unparsed, str):
+			h, txt, unparsed = get_token(unparsed)
+			rlen = len(h)+len(txt)
+			vm = txt.split("/", 1)
+			payload = binascii.a2b_hex(vm[0])
+			length = len(payload)
+			if len(vm) > 1:
+				has_mask = True
+				mask = binascii.a2b_hex(vm[1])
+				pad = b"\0" * abs(len(mask)-len(payload))
+				if len(payload) < len(mask):
+					length = len(mask)
+					payload = payload+pad+mask
+				else:
+					payload = payload+mask+pad
+		elif unparsed:
+			has_mask = True
+		
+		return header(field, length, has_mask)+payload, rlen
 	
 	return str2bin
 
@@ -381,22 +496,29 @@ def ssid_bin2str(payload, has_mask):
 
 
 def ssid_str2bin(unparsed):
-	lead, v, ext, m = get_value(unparsed)
-	value = v.encode("UTF-8")
-	if ext is not None:
-		mask = bytearray.fromhex(m)
-		bl = max(len(value), len(mask))
-		
-		payload = bytearray(bl*2)
-		payload[:len(value)] = value
-		payload[bl:bl+len(mask)] = mask
-		ret = struct.pack("!HBBIH", OFPXMC_EXPERIMENTER, (STRATOS_OXM_FIELD_BASIC<<1)|1, 10+bl*2,
-			STRATOS_EXPERIMENTER_ID, STROXM_BASIC_DOT11_SSID)+payload
-		return ret, len(lead)+len(v)+len(ext)
-	else:
-		ret = struct.pack("!HBBIH", OFPXMC_EXPERIMENTER, STRATOS_OXM_FIELD_BASIC<<1, 10+len(value),
-			STRATOS_EXPERIMENTER_ID, STROXM_BASIC_DOT11_SSID)+value
-		return ret, len(lead)+len(v)
+	rlen = 0
+	payload = b""
+	has_mask = False
+	length = 0xff
+	if isinstance(unparsed, str):
+		h, txt, unparsed = get_token(unparsed)
+		rlen = len(h) + len(txt)
+		vm = txt.split("/")
+		payload = vm[0].encode("UTF-8")
+		length = len(payload)
+		if len(vm) > 1:
+			has_mask = True
+			mask = binascii.a2b_hex(vm[1])
+			pad = b"\0" * abs(len(payload)-len(mask))
+			if len(payload) < len(mask):
+				length = len(mask)
+				payload += pad + mask
+			else:
+				payload += mask + pad
+	elif unparsed:
+		has_mask = True
+	
+	return header(STROXM_BASIC_DOT11_SSID, length, has_mask)+payload, rlen
 
 
 def le_bin2str(fmt):
@@ -423,27 +545,26 @@ def le_bin2str(fmt):
 	return bin2str
 
 
-def le_str2bin(field_or_etype, size):
-	hdr = header(field_or_etype)
+def le_str2bin(field, size):
 	def str2bin(unparsed):
-		ret = bytearray(hdr)
-		
-		num,l = parseInt(unparsed)
-		for s in range(size):
-			ret.append(0xFF & (num>>(8*s)))
-		
-		if unparsed[l:].startswith("/"):
-			num,e = parseInt(unparsed[l+1:])
+		rlen = 0
+		payload = b""
+		has_mask = False
+		if isinstance(unparsed, str):
+			num,rlen = parseInt(unparsed)
 			for s in range(size):
-				ret.append(0xFF & (num>>(8*s)))
+				payload += chr(0xFF & (num>>(8*s)))
 			
-			l += e + 1
-			ret[2] |= 1
-			ret[3] = len(hdr) - 4 + size * 2
-		else:
-			ret[3] = len(hdr) - 4 + size
+			if unparsed[rlen:].startswith("/"):
+				has_mask = True
+				num,e = parseInt(unparsed[rlen+1:])
+				rlen += 1 + e
+				for s in range(size):
+					payload += chr(0xFF & (num>>(8*s)))
+		elif unparsed:
+			has_mask = True
 		
-		return bytes(ret), l
+		return header(field, size, has_mask)+payload, rlen
 	
 	return str2bin
 
@@ -458,16 +579,23 @@ def rate_bin2str(payload, has_mask):
 
 
 def rate_str2bin(unparsed):
-	num, l = parseFloat(unparsed)
-	if unparsed[l] == "K":
-		rate = num / 500
-	elif unparsed[l] == "M":
-		rate = num * 2
-	else:
-		raise ValueError("rate unit error")
+	rlen = 0
+	payload = b""
+	has_mask = False
+	if isinstance(unparsed, str):
+		num, rlen = parseFloat(unparsed)
+		if unparsed[rlen] == "K":
+			rate = num / 500
+			rlen += 1
+		elif unparsed[rlen] == "M":
+			rate = num * 2
+			rlen += 1
+		else:
+			raise ValueError("rate unit error")
+		
+		payload = struct.pack("!B", int(rate))
 	
-	return struct.pack("!HBBIHB", OFPXMC_EXPERIMENTER, STRATOS_OXM_FIELD_RADIOTAP<<1, 11,
-		STRATOS_EXPERIMENTER_ID, STROXM_RADIOTAP_RATE, int(rate)), l+1
+	return header(STROXM_RADIOTAP_RATE, 1, False)+payload, rlen
 
 
 def ch_bin2str(payload, has_mask):
@@ -486,27 +614,36 @@ def ch_bin2str(payload, has_mask):
 
 
 def ch_str2bin(unparsed):
-	ret = bytearray(header(STROXM_RADIOTAP_CHANNEL))
-	v1,l = parseInt(unparsed)
-	assert unparsed[l] == ":"
-	v2,l2 = parseInt(unparsed[l+1:])
-	ret += struct.pack("!HH", v1, v2)
+	rlen = 0
+	payload = b""
+	has_mask = False
 	
-	if unparsed[l+1+l2:].startswith("/"):
-		m1 = 0
-		l3 = 0
-		if not unparsed[l+1+l2+1:].startswith(":"):
-			m1,l3 = parseInt(unparsed[l+1+l2+1:])
-		assert unparsed[l+1+l2+1+l3:].startswith(":")
-		m2,l4 = parseInt(unparsed[l+1+l2+1+l3+1:])
+	if isinstance(unparsed, str):
+		v1,l = parseInt(unparsed)
+		assert unparsed[l] == ":"
+		v2,l2 = parseInt(unparsed[l+1:])
+		payload = struct.pack("!HH", v1, v2)
+		rlen = l+1+l2
 		
-		ret[2] |= 1
-		ret[3] = 14
-		ret += struct.pack("!HH", m1, m2)
-		return bytes(ret), sum((l, l2, l3, l4, 3))
-	else:
-		ret[3] = 10
-		return bytes(ret), sum((l, l2, 1))
+		if unparsed[rlen:].startswith("/"):
+			has_mask = True
+			if unparsed[rlen+1:].startswith(":"):
+				m1 = l3 = 0
+			else:
+				m1,l3 = parseInt(unparsed[rlen+1:])
+			
+			if unparsed[rlen+1+l3:].startswith(":"):
+				m2,l4 = parseInt(unparsed[rlen+1+l3+1:])
+				rlen += 1 + l3 + 1 + l4
+			else:
+				m2 = 0
+				rlen += 1 + l3
+			
+			payload += struct.pack("!HH", m1, m2)
+	elif unparsed:
+		has_mask = True
+	
+	return header(STROXM_RADIOTAP_CHANNEL, 4, has_mask)+payload, rlen
 
 
 def comp_bin2str(name, packs, fmts):
@@ -531,36 +668,35 @@ def comp_bin2str(name, packs, fmts):
 	return bin2str
 
 
-def comp_str2bin(field_or_etype, packs):
-	hdr = header(field_or_etype)
-	def str2bin(unparsed):
-		def collect(txt):
-			ps = []
-			for t in txt.split(":"):
-				v = l = 0
-				if len(t):
-					v, l = parseInt(t)
-					assert len(t) == l
-				ps.append(v)
-			
-			return struct.pack(packs, *ps)
+def comp_str2bin(field, packs):
+	def collect(txt):
+		ps = []
+		for t in txt.split(":"):
+			v = l = 0
+			if len(t):
+				v, l = parseInt(t)
+				assert len(t) == l
+			ps.append(v)
 		
-		lead, v, ext, m = get_value(unparsed)
-		value = collect(v)
-		if ext is not None:
-			mask = collect(m)
-			ret = bytearray(len(hdr) + len(value) + len(mask))
-			ret[:len(hdr)] = hdr
-			ret[2] |= 1
-			ret[3] = len(ret) - 4
-			ret[len(hdr):] = value + mask
-			return bytes(ret), len(lead)+len(v)+len(ext)
-		else:
-			ret = bytearray(len(hdr) + len(value))
-			ret[:len(hdr)] = hdr
-			ret[3] = len(ret) - 4
-			ret[len(hdr):] = value
-			return bytes(ret), len(lead)+len(v)
+		return struct.pack(packs, *ps)
+	
+	def str2bin(unparsed):
+		rlen = 0
+		payload = b""
+		has_mask = False
+		
+		if isinstance(unparsed, str):
+			h,txt,unparsed = get_token(unparsed)
+			rlen = len(h) + len(txt)
+			vm = txt.split("/", 1)
+			payload = collect(vm[0])
+			if len(vm) > 1:
+				has_mask = True
+				payload += collect(vm[1])
+		elif unparsed:
+			has_mask = True
+		
+		return header(field, struct.calcsize(packs), has_mask)+payload, rlen
 	
 	return str2bin
 
@@ -610,23 +746,21 @@ def vht_str2bin(unparsed):
 		
 		return struct.pack(packs, *ps)
 	
-	lead, v, ext, m = get_value(unparsed)
-	hdr = header(STROXM_RADIOTAP_VHT)
-	value = collect(v)
-	if ext is not None:
-		mask = collect(m)
-		ret = bytearray(len(hdr) + struct.calcsize(packs)*2)
-		ret[:len(hdr)] = hdr
-		ret[2] |= 1
-		ret[3] = len(ret) - 4
-		ret[len(hdr):] = value+mask
-		return bytes(ret), len(lead)+len(v)+len(ext)
-	else:
-		ret = bytearray(len(hdr) + struct.calcsize(packs))
-		ret[:len(hdr)] = hdr
-		ret[3] = len(ret) - 4
-		ret[len(hdr):] = value
-		return bytes(ret), len(lead)+len(v)
+	rlen = 0
+	payload = b""
+	has_mask = False
+	if isinstance(unparsed, str):
+		h,txt,unparsed = get_token(unparsed)
+		rlen = len(h) + len(txt)
+		vm = txt.split("/", 1)
+		payload = collect(vm[0])
+		if len(vm) > 1:
+			has_mask = True
+			payload += collect(vm[1])
+	elif unparsed:
+		has_mask = True
+	
+	return header(STROXM_RADIOTAP_VHT, struct.calcsize(packs), has_mask)+payload, rlen
 
 
 def s8_bin2str(name):
@@ -637,34 +771,15 @@ def s8_bin2str(name):
 	return bin2str
 
 
-def s8_str2bin(field_or_etype):
-	hdr = header(field_or_etype)
+def s8_str2bin(field):
 	def str2bin(unparsed):
-		ret = bytearray(hdr)
-		num,l = parseInt(unparsed)
-		ret[3] = len(hdr) - 4 + 1
-		ret += struct.pack("<b", num)
-		return bytes(ret), l
-	
-	return str2bin
-
-
-def si_bin2str(name): # Little endian
-	def bin2str(payload, has_mask):
-		assert not has_mask
-		return "{:s}={:d}".format(name, struct.unpack("<i", payload)[0])
-	
-	return bin2str
-
-
-def si_str2bin(field_or_etype): # Little endian
-	hdr = header(field_or_etype)
-	def str2bin(unparsed):
-		ret = bytearray(hdr)
-		num,l = parseInt(unparsed)
-		ret[3] = len(hdr) - 4 + 4
-		ret += struct.pack("<i", num)
-		return bytes(ret), l
+		rlen = 0
+		payload = b""
+		if isinstance(unparsed, str):
+			num,rlen = parseInt(unparsed)
+			payload = struct.pack("<b", num)
+		
+		return header(field, 1, False)+payload, rlen
 	
 	return str2bin
 
@@ -792,7 +907,7 @@ _str2bin["ipv6_exthdr"] = uint_str2bin(OXM_OF_IPV6_EXTHDR, 2)
 _bin2str[OXM_OF_PBB_UCA] = uint_bin2str("pbb_uca={:d}")
 _str2bin["pbb_uca"] = uint_str2bin(OXM_OF_PBB_UCA, 1)
 
-_bin2str[OXM_OF_TCP_FLAGS] = uint_bin2str("tcp_flags={:04x}/{:04x}")
+_bin2str[OXM_OF_TCP_FLAGS] = uint_bin2str("tcp_flags={:#04x}/{:#04x}")
 _str2bin["tcp_flags"] = uint_str2bin(OXM_OF_TCP_FLAGS, 2)
 
 _bin2str[OXM_OF_ACTSET_OUTPUT] = port_bin2str("actset_output")
@@ -800,6 +915,153 @@ _str2bin["actset_output"] = port_str2bin(OXM_OF_ACTSET_OUTPUT)
 
 _bin2str[OXM_OF_PACKET_TYPE] = pkt_bin2str
 _str2bin["packet_type"] = pkt_str2bin
+
+_bin2str[NXM_OF_IN_PORT] = port_bin2str("nxm_in_port")
+_str2bin["nxm_in_port"] = port_str2bin(NXM_OF_IN_PORT)
+
+_bin2str[NXM_OF_ETH_DST] = mac_bin2str("nxm_eth_dst")
+_str2bin["nxm_eth_dst"] = mac_str2bin(NXM_OF_ETH_DST)
+
+_bin2str[NXM_OF_ETH_SRC] = mac_bin2str("nxm_eth_src")
+_str2bin["nxm_eth_src"] = mac_str2bin(NXM_OF_ETH_SRC)
+
+_bin2str[NXM_OF_ETH_TYPE] = uint_bin2str("nxm_eth_type={:#04x}")
+_str2bin["nxm_eth_type"] = uint_str2bin(NXM_OF_ETH_TYPE, 2)
+
+_bin2str[NXM_OF_VLAN_TCI] = uint_bin2str("nxm_vlan_tci={:#04x}")
+_str2bin["nxm_vlan_tci"] = uint_str2bin(NXM_OF_VLAN_TCI, 2)
+
+_bin2str[NXM_OF_IP_TOS] = uint_bin2str("nxm_ip_tos={:#x}")
+_str2bin["nxm_ip_tos"] = uint_str2bin(NXM_OF_IP_TOS, 1)
+
+_bin2str[NXM_OF_IP_PROTO] = uint_bin2str("nxm_ip_proto={:d}")
+_str2bin["nxm_ip_proto"] = uint_str2bin(NXM_OF_IP_PROTO, 1)
+
+_bin2str[NXM_OF_IP_SRC] = ipv4_bin2str("nxm_ip_src")
+_str2bin["nxm_ip_src"] = ipv4_str2bin(NXM_OF_IP_SRC)
+
+_bin2str[NXM_OF_IP_DST] = ipv4_bin2str("nxm_ip_dst")
+_str2bin["nxm_ip_dst"] = ipv4_str2bin(NXM_OF_IP_DST)
+
+_bin2str[NXM_OF_TCP_SRC] = uint_bin2str("nxm_tcp_src={:d}")
+_str2bin["nxm_tcp_src"] = uint_str2bin(NXM_OF_TCP_SRC, 2)
+
+_bin2str[NXM_OF_TCP_DST] = uint_bin2str("nxm_tcp_dst={:d}")
+_str2bin["nxm_tcp_dst"] = uint_str2bin(NXM_OF_TCP_DST, 2)
+
+_bin2str[NXM_OF_UDP_SRC] = uint_bin2str("nxm_udp_src={:d}")
+_str2bin["nxm_udp_src"] = uint_str2bin(NXM_OF_UDP_SRC, 2)
+
+_bin2str[NXM_OF_UDP_DST] = uint_bin2str("nxm_udp_dst={:d}")
+_str2bin["nxm_udp_dst"] = uint_str2bin(NXM_OF_UDP_DST, 2)
+
+_bin2str[NXM_OF_ICMP_TYPE] = uint_bin2str("nxm_icmp_type={:d}")
+_str2bin["nxm_icmp_type"] = uint_str2bin(NXM_OF_ICMP_TYPE, 1)
+
+_bin2str[NXM_OF_ICMP_CODE] = uint_bin2str("nxm_icmp_code={:d}")
+_str2bin["nxm_icmp_code"] = uint_str2bin(NXM_OF_ICMP_CODE, 1)
+
+_bin2str[NXM_OF_ARP_OP] = uint_bin2str("nxm_arp_op={:#d}")
+_str2bin["nxm_arp_op"] = uint_str2bin(NXM_OF_ARP_OP, 2)
+
+_bin2str[NXM_OF_ARP_SPA] = ipv4_bin2str("nxm_arp_spa")
+_str2bin["nxm_arp_spa"] = ipv4_str2bin(NXM_OF_ARP_SPA)
+
+_bin2str[NXM_OF_ARP_TPA] = ipv4_bin2str("nxm_arp_tpa")
+_str2bin["nxm_arp_tpa"] = ipv4_str2bin(NXM_OF_ARP_TPA)
+
+_bin2str[NXM_NX_REG0] = uint_bin2str("nxm_reg0={:#x}/{:#x}")
+_str2bin["nxm_reg0"] = uint_str2bin(NXM_NX_REG0, 4)
+
+_bin2str[NXM_NX_REG1] = uint_bin2str("nxm_reg1={:#x}/{:#x}")
+_str2bin["nxm_reg1"] = uint_str2bin(NXM_NX_REG1, 4)
+
+_bin2str[NXM_NX_REG2] = uint_bin2str("nxm_reg2={:#x}/{:#x}")
+_str2bin["nxm_reg2"] = uint_str2bin(NXM_NX_REG2, 4)
+
+_bin2str[NXM_NX_REG3] = uint_bin2str("nxm_reg3={:#x}/{:#x}")
+_str2bin["nxm_reg3"] = uint_str2bin(NXM_NX_REG3, 4)
+
+_bin2str[NXM_NX_REG4] = uint_bin2str("nxm_reg4={:#x}/{:#x}")
+_str2bin["nxm_reg4"] = uint_str2bin(NXM_NX_REG4, 4)
+
+_bin2str[NXM_NX_REG5] = uint_bin2str("nxm_reg5={:#x}/{:#x}")
+_str2bin["nxm_reg5"] = uint_str2bin(NXM_NX_REG5, 4)
+
+_bin2str[NXM_NX_REG6] = uint_bin2str("nxm_reg6={:#x}/{:#x}")
+_str2bin["nxm_reg6"] = uint_str2bin(NXM_NX_REG6, 4)
+
+_bin2str[NXM_NX_REG7] = uint_bin2str("nxm_reg7={:#x}/{:#x}")
+_str2bin["nxm_reg7"] = uint_str2bin(NXM_NX_REG7, 4)
+
+_bin2str[NXM_NX_TUN_ID] = uint_bin2str("nxm_tun_id={:#x}/{:#x}")
+_str2bin["nxm_tun_id"] = uint_str2bin(NXM_NX_TUN_ID, 8)
+
+_bin2str[NXM_NX_ARP_SHA] = mac_bin2str("nxm_arp_sha")
+_str2bin["nxm_arp_sha"] = mac_str2bin(NXM_NX_ARP_SHA)
+
+_bin2str[NXM_NX_ARP_THA] = mac_bin2str("nxm_arp_tha")
+_str2bin["nxm_arp_tha"] = mac_str2bin(NXM_NX_ARP_THA)
+
+_bin2str[NXM_NX_IPV6_SRC] = ipv6_bin2str("nxm_ipv6_src")
+_str2bin["nxm_ipv6_src"] = ipv6_str2bin(NXM_NX_IPV6_SRC)
+
+_bin2str[NXM_NX_IPV6_DST] = ipv6_bin2str("nxm_ipv6_dst")
+_str2bin["nxm_ipv6_dst"] = ipv6_str2bin(NXM_NX_IPV6_DST)
+
+_bin2str[NXM_NX_ICMPV6_TYPE] = uint_bin2str("nxm_icmpv6_type={:d}")
+_str2bin["nxm_icmpv6_type"] = uint_str2bin(NXM_NX_ICMPV6_TYPE, 1)
+
+_bin2str[NXM_NX_ICMPV6_CODE] = uint_bin2str("nxm_icmpv6_code={:d}")
+_str2bin["nxm_icmpv6_code"] = uint_str2bin(NXM_NX_ICMPV6_CODE, 1)
+
+_bin2str[NXM_NX_ND_TARGET] = ipv6_bin2str("nxm_nd_target")
+_str2bin["nxm_nd_target"] = ipv6_str2bin(NXM_NX_ND_TARGET)
+
+_bin2str[NXM_NX_ND_SLL] = mac_bin2str("nxm_nd_sll")
+_str2bin["nxm_nd_sll"] = mac_str2bin(NXM_NX_ND_SLL)
+
+_bin2str[NXM_NX_ND_TLL] = mac_bin2str("nxm_nd_tll")
+_str2bin["nxm_nd_tll"] = mac_str2bin(NXM_NX_ND_TLL)
+
+_bin2str[NXM_NX_IP_FRAG] = uint_bin2str("nxm_icmp_type={:d}")
+_str2bin["nxm_ip_frag"] = uint_str2bin(NXM_NX_IP_FRAG, 1)
+
+_bin2str[NXM_NX_IPV6_LABEL] = uint_bin2str("nxm_ipv6_label={:#x}/{:#x}")
+_str2bin["nxm_ipv6_label"] = uint_str2bin(NXM_NX_IPV6_LABEL, 4)
+
+_bin2str[NXM_NX_IP_ECN] = uint_bin2str("nxm_ip_ecn={:#x}")
+_str2bin["nxm_ip_ecn"] = uint_str2bin(NXM_NX_IP_ECN, 1)
+
+_bin2str[NXM_NX_IP_TTL] = uint_bin2str("nxm_ip_ttl={:d}")
+_str2bin["nxm_ip_ttl"] = uint_str2bin(NXM_NX_IP_TTL, 1)
+
+_bin2str[NXM_NX_TUN_IPV4_SRC] = ipv4_bin2str("nxm_tun_ipv4_src")
+_str2bin["nxm_tun_ipv4_src"] = ipv4_str2bin(NXM_NX_TUN_IPV4_SRC)
+
+_bin2str[NXM_NX_TUN_IPV4_DST] = ipv4_bin2str("nxm_tun_ipv4_dst")
+_str2bin["nxm_tun_ipv4_dst"] = ipv4_str2bin(NXM_NX_TUN_IPV4_DST)
+
+_bin2str[NXM_NX_PKT_MARK] = uint_bin2str("nxm_pkt_mark={:#x}/{:#x}")
+_str2bin["nxm_pkt_mark"] = uint_str2bin(NXM_NX_PKT_MARK, 4)
+
+_bin2str[NXM_NX_TCP_FLAGS] = uint_bin2str("nxm_tcp_flags={:#04x}/{:#04x}")
+_str2bin["nxm_tcp_flags"] = uint_str2bin(NXM_NX_TCP_FLAGS, 2)
+
+_bin2str[NXM_NX_DP_HASH] = uint_bin2str("nxm_dp_hash={:#06x}")
+_str2bin["nxm_dp_hash"] = uint_str2bin(NXM_NX_DP_HASH, 4)
+
+_bin2str[NXM_NX_RECIRC_ID] = uint_bin2str("nxm_recirc_id={:#06x}")
+_str2bin["nxm_recirc_id"] = uint_str2bin(NXM_NX_RECIRC_ID, 4)
+
+_bin2str[NXM_NX_CONJ_ID] = uint_bin2str("nxm_conj_id={:#06x}")
+_str2bin["nxm_conj_id"] = uint_str2bin(NXM_NX_CONJ_ID, 4)
+
+_bin2str[NXM_NX_TUN_GBP_ID] = uint_bin2str("nxm_tun_gbp_id={:#04x}/{:#04x}")
+_str2bin["nxm_tun_gbp_id"] = uint_str2bin(NXM_NX_TUN_GBP_ID, 2)
+
+_bin2str[NXM_NX_TUN_GBP_FLAGS] = uint_bin2str("nxm_tun_gbp_flags={:#x}/{:#x}")
+_str2bin["nxm_tun_gbp_flags"] = uint_str2bin(NXM_NX_TUN_GBP_FLAGS, 1)
 
 _bin2str[STROXM_BASIC_DOT11] = uint_bin2str("dot11={:d}")
 _str2bin["dot11"] = uint_str2bin(STROXM_BASIC_DOT11, 1)
@@ -864,8 +1126,8 @@ _str2bin["radiotap_tx_attenuation"] = le_str2bin(STROXM_RADIOTAP_TX_ATTENUATION,
 _bin2str[STROXM_RADIOTAP_DB_TX_ATTENUATION] = le_bin2str("radiotap_db_tx_attenuation={:d}")
 _str2bin["radiotap_db_tx_attenuation"] = le_str2bin(STROXM_RADIOTAP_DB_TX_ATTENUATION, 2)
 
-_bin2str[STROXM_RADIOTAP_DBM_TX_POWER] = si_bin2str("radiotap_dbm_tx_power")
-_str2bin["radiotap_dbm_tx_power"] = si_str2bin(STROXM_RADIOTAP_DBM_TX_POWER)
+_bin2str[STROXM_RADIOTAP_DBM_TX_POWER] = s8_bin2str("radiotap_dbm_tx_power")
+_str2bin["radiotap_dbm_tx_power"] = s8_str2bin(STROXM_RADIOTAP_DBM_TX_POWER)
 
 _bin2str[STROXM_RADIOTAP_ANTENNA] = le_bin2str("radiotap_antenna={:d}")
 _str2bin["radiotap_antenna"] = le_str2bin(STROXM_RADIOTAP_ANTENNA, 1)
@@ -904,17 +1166,14 @@ def oxm2str(msg, loop=True):
 		(kls,f1,l) = struct.unpack_from("!HBB", msg)
 		if kls == OFPXMC_OPENFLOW_BASIC:
 			tokens.append(_bin2str[f1>>1](msg[4:4+l], (f1&1)==1))
+		elif kls == OFPXMC_NXM_0:
+			tokens.append(_bin2str[nxm_of(f1>>1)](msg[4:4+l], (f1&1)==1))
+		elif kls == OFPXMC_NXM_1:
+			tokens.append(_bin2str[nxm_nx(f1>>1)](msg[4:4+l], (f1&1)==1))
 		elif kls == OFPXMC_EXPERIMENTER:
 			exp = struct.unpack_from("!I", msg, 4)[0]
 			if exp == STRATOS_EXPERIMENTER_ID:
-				etype = struct.unpack_from("!H", msg, 8)[0]
-				field = f1>>1
-				if field == STRATOS_OXM_FIELD_BASIC:
-					tokens.append(_bin2str[stratos_basic(etype)](msg[10:4+l], (f1&1)==1))
-				elif field == STRATOS_OXM_FIELD_RADIOTAP:
-					tokens.append(_bin2str[stratos_radiotap(etype)](msg[10:4+l], (f1&1)==1))
-				else:
-					tokens.append("?") # unknown stratos field
+				tokens.append(_bin2str[stratos(f1>>1)](msg[8:4+l], (f1&1)==1))
 			else:
 				tokens.append("?") # unknown experimenter id
 		else:
@@ -929,21 +1188,36 @@ def oxm2str(msg, loop=True):
 
 
 def str2oxm(unparsed, loop=True):
-	step = 0
+	total = len(unparsed)
 	msg = b""
-	while True:
-		try:
-			lead, key, op, payload = get_unit(unparsed[step:])
-			b,p = _str2bin[key](payload)
-			if not p:
-				break
-			
-			msg += b
-			step += len(lead)+len(key)+len(op)+p
-		except:
+	while unparsed:
+		head,name,unparsed = get_token(unparsed)
+		op,payload,unparsed = get_token(unparsed)
+		assert head.find("=") < 0 and op.find("=") >= 0
+		bin,length = _str2bin[name](payload)
+		if not length:
 			break
+		
+		assert length == len(payload), "{0} pos {1}".format(payload, length)
+		msg += bin
 		
 		if not loop:
 			break
 	
-	return msg, step
+	return msg, total - len(unparsed)
+
+
+def str2oxmid(unparsed, loop=True, has_mask=True):
+	ret = b""
+	while unparsed:
+		oxmid = None
+		head,name,unparsed = get_token(unparsed)
+		if name == "_":
+			pass
+		else:
+			bin,length = _str2bin[name](has_mask)
+			assert length == 0
+			ret += bin
+	
+	return ret
+
