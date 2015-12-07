@@ -331,9 +331,51 @@ def action_reg_move_act2str(payload):
 	
 	return "reg_move({:s})".format(arg)
 
+def action_resubmit_str2act(subtype):
+	@_nxast_str2act
+	def str2act(unparsed, readarg):
+		total = len(unparsed)
+		h,p,unparsed=get_token(unparsed)
+		port = None
+		if p.upper() == "IN_PORT":
+			port = 0xfff8
+		if port is None:
+			port, rlen = parseInt(p)
+			assert len(p) == rlen
+			assert port < 0xff00
+		
+		tbl = ""
+		if readarg:
+			assert "=" in h
+			if subtype == NXAST_RESUBMIT_TABLE and unparsed.startswith(":"):
+				h2,tbl,unparsed = get_token(unparsed[1:])
+		elif subtype == NXAST_RESUBMIT_TABLE:
+			h2,tbl,unparsed = get_token(unparsed)
+		
+		if len(tbl)==0 or tbl.upper() == "ALL":
+			table = 0xff
+		else:
+			table, rlen = parseInt(tbl)
+			assert rlen == len(tbl)
+		
+		return _nxast_hdr(subtype)+struct.pack("!HB", port, table), total-len(unparsed)
+	return str2act
+
+def action_resubmit_act2str(payload):
+	p = struct.unpack_from("!H", payload)[0]
+	port = "in_port" if p==0xfff8 else "{:d}".format(p)
+	return "resubmit({:s})".format(port)
+
+def action_resubmit_table_act2str(payload):
+	p,tbl = struct.unpack_from("!HB", payload)
+	port = "in_port" if p==0xfff8 else "{:d}".format(p)
+	if tbl == 0xff:
+		table = "all"
+	else:
+		table = "{:d}".format(tbl)
+	return "resubmit_table({:s},{:s})".format(port, table)
+
 #
-# resubmit=in_port
-# resubmit_table=in_port:all
 # set_tunnel=0xff
 # pop_queue
 #
@@ -401,6 +443,13 @@ _act2str[NXAST_REG_LOAD2] = action_reg_load2_act2str
 
 _str2act["reg_move"] = action_reg_move_str2act
 _act2str[NXAST_REG_MOVE] = action_reg_move_act2str
+
+_str2act["resubmit"] = action_resubmit_str2act(NXAST_RESUBMIT)
+_act2str[NXAST_RESUBMIT] = action_resubmit_act2str
+
+_str2act["resubmit_table"] = action_resubmit_str2act(NXAST_RESUBMIT_TABLE)
+_act2str[NXAST_RESUBMIT_TABLE] = action_resubmit_table_act2str
+
 
 def str2act(s):
 	h,name,arg = get_token(s)

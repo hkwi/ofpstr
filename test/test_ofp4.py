@@ -25,6 +25,10 @@ class TestRoundTrip(unittest.TestCase):
 		"reg_load2(nxm_vlan_tci=0xa/0x0fff)",
 		"reg_move(nxm_eth_dst=nxm_eth_src)",
 		"reg_move(nxm_eth_dst[0:4]=nxm_eth_src[4:8])",
+		"resubmit(in_port)",
+		"resubmit(1)",
+		"resubmit_table(in_port,all)",
+		"resubmit_table(1,1)",
 #		"learn(nxm_in_port=99,nxm_eth_dst=nxm_eth_src,reg_load(nxm_reg1[16:32],nxm_in_port)",
 		)
 	flows = (
