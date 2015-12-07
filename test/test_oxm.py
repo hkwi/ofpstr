@@ -70,8 +70,10 @@ class TestRoundTrip(unittest.TestCase):
 	
 	def test_id(self):
 		for rule in self.rules:
-			oxmid = ofpstr.oxm.str2oxmid(rule.split("=")[0])
+			strid = rule.split("=")[0]
+			oxmid = ofpstr.oxm.str2oxmid(strid)
 			assert len(oxmid) in (4, 8)
+			assert strid == ofpstr.oxm.oxmid2str(oxmid), "{0}!={1}".format(strid, ofpstr.oxm.oxmid2str(oxmid))
 
 if __name__ == "__main__":
 	unittest.main()

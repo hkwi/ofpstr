@@ -1,6 +1,6 @@
 import struct
-from .util import ofpp, parseInt, get_token, parse_func, split
-from .oxm import str2oxm, oxm2str
+from .util import ofpp, parseInt, get_token, parse_func, parse_bits, split
+from .oxm import str2oxm, oxm2str, str2oxmid, oxmid2str
 
 align8 = lambda x:(x+7)//8*8
 
@@ -168,16 +168,14 @@ def _fix_act_len(bin):
 		return bin
 	return bin[0:2]+struct.pack("!H", len(bin))+bin[4:]
 
-def _field_bits(nojunk):
-	''' dst_oxmid, ofs_nbits '''
-	name,start,end = parse_bits(nojunk)
-	if start is None:
-		start = 0
-	else:
-		assert start < end
-	
-	return str2oxmid(name), (start<<6) + (end-start+1)
+def _nxast_str2act(func):
+	def str2act(unparsed, readarg):
+		bin,rlen = func(unparsed, readarg)
+		return _fix_act_len(_pad8(bin)), rlen
+	return str2act
 
+
+@_nxast_str2act
 def action_cnt_ids_str2act(unparsed, readarg):
 	if readarg:
 		op,value,unparsed = get_token(unparsed)
@@ -188,30 +186,98 @@ def action_cnt_ids_str2act(unparsed, readarg):
 		ids = split(unparsed)
 		length = 0
 	ids = map(lambda x: parseInt(x)[0], ids)
-	return _fix_act_len(_pad8(
-		_nxast_hdr(NXAST_CNT_IDS)+struct.pack("!H4x{:d}H".format(len(ids)), len(ids), *ids))
-		), length
+	return _nxast_hdr(NXAST_CNT_IDS)+struct.pack("!H4x{:d}H".format(len(ids)), len(ids), *ids), length
 
 def action_cnt_ids_act2str(payload):
 	num = struct.unpack_from("!H", payload)[0]
 	return "cnt_ids({:s})".format(",".join(map(lambda x: "{:#x}".format(x), struct.unpack_from("!{:d}H".format(num), payload, 6))))
 
 def action_reg_load_str2act(subtype):
-	hdr = _nxast_hdr(subtype)
+	@_nxast_str2act
 	def str2act(unparsed, readarg):
 		if readarg:
-			h,b,unparsed = get_token(unparsed)
-			vm = b.split(":")
-		else:
-			vm = split(unparsed)
-		assert len(vm) == 2
-		if vm[0]:
-			src = parseInt(vm[0])
-		else:
-			src = 0
+			raise ValueError("reg_load argument error")
+		oxm, rlen = str2oxm(unparsed, loop=False)
+		if rlen==0:
+			raise ValueError("invalid reg_load argument {0}".format(unparsed))
 		
-		dst, _field_bits(vm[1])
+		oxm_class, oxm_field, oxm_length = struct.unpack_from("!HBB", oxm)
+		payload = oxm[4:]
+		if oxm_class == 0xffff:
+			payload = oxm[6:]
+		
+		if subtype == NXAST_REG_LOAD:
+			shift = 0
+			nbits = None
+			if oxm_field&0x1: # has_mask
+				size = len(payload)//2
+				mask = payload[size:]
+				payload = payload[:size]
+				for m in reversed(mask):
+					v = ord(m)
+					for d in range(8):
+						if v & (1<<d):
+							if nbits is None:
+								nbits = 0
+							nbits += 1
+						elif nbits is None:
+							shift += 1
+						else:
+							break
+			else:
+				size = len(payload)
+				nbits = size * 8
+			
+			value = 0
+			for p in payload:
+				value = (value<<8) + ord(p)
+			
+			value = value>>shift
+			return _nxast_hdr(NXAST_REG_LOAD)+struct.pack("!HHBBQ",
+				(shift<<6)+(nbits-1), oxm_class, oxm_field&0xfe, size, value), rlen
+		elif subtype == NXAST_REG_LOAD2:
+			return _nxast_hdr(NXAST_REG_LOAD2)+oxm, rlen
+		else:
+			return b"", 0
 	return str2act
+
+def action_reg_load_act2str(payload):
+	ofs_nbits,oxm_class,oxm_field,oxm_length,value = struct.unpack_from("!HHBBQ", payload)
+	name = oxmid2str(payload[2:6])
+	oxmid = str2oxmid(name, loop=False, has_mask=False)
+	info = struct.unpack_from("!HBB", oxmid)
+	size = info[2]
+	
+	shift = ofs_nbits>>6
+	nbits = (ofs_nbits & 0x3f) + 1
+	if shift == 0 and nbits == size*8:
+		has_mask = False
+		u = b""
+		for s in range(size):
+			u = chr(value>>(s*8))+u
+		arg = oxm2str(oxmid+u)
+	else:
+		value = value<<shift
+		mask = 0
+		for s in range(nbits):
+			mask = (mask<<1) + 1
+		for s in range(shift):
+			mask = mask<<1
+		
+		u = b""
+		for s in range(size):
+			u = chr((mask>>(s*8))&0xff)+u
+		for s in range(size):
+			u = chr((value>>(s*8))&0xff)+u
+		
+		import binascii
+		print binascii.b2a_hex(struct.pack("!HBB", oxm_class, oxm_field|0x1, size*2)+u)
+		arg = oxm2str(struct.pack("!HBB", oxm_class, oxm_field|0x1, size*2)+u)
+	
+	return "reg_load({:s})".format(arg)
+
+def action_reg_load2_act2str(payload):
+	return "reg_load2({:s})".format(oxm2str(payload, loop=False))
 
 #
 # cnt_ids=id1:id2:id3
@@ -279,6 +345,12 @@ _act2str[OFPAT_POP_PBB] = action_generic_act2str("pop_pbb")
 
 _str2act["cnt_ids"] = action_cnt_ids_str2act
 _act2str[NXAST_CNT_IDS] = action_cnt_ids_act2str
+
+_str2act["reg_load"] = action_reg_load_str2act(NXAST_REG_LOAD)
+_act2str[NXAST_REG_LOAD] = action_reg_load_act2str
+
+_str2act["reg_load2"] = action_reg_load_str2act(NXAST_REG_LOAD2)
+_act2str[NXAST_REG_LOAD2] = action_reg_load2_act2str
 
 def str2act(s):
 	h,name,arg = get_token(s)

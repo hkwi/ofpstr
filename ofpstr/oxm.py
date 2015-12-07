@@ -216,6 +216,9 @@ def header(field, value_length, mask):
 
 def uint_bin2str(fmt):
 	def bin2str(payload, has_mask):
+		if payload is None:
+			return fmt.split("=")[0]
+		
 		l = len(payload)
 		if has_mask:
 			value = L0
@@ -264,6 +267,9 @@ def uint_str2bin(field, size):
 
 def port_bin2str(name):
 	def bin2str(payload, has_mask):
+		if payload is None:
+			return name
+		
 		assert not has_mask, "{:s} does not take mask".format(name)
 		assert len(payload) == 4, repr(payload)
 		num = struct.unpack_from("!I", payload)[0]
@@ -297,6 +303,9 @@ def port_str2bin(field):
 
 def mac_bin2str(name):
 	def bin2str(payload, has_mask):
+		if payload is None:
+			return name
+		
 		value = ":".join(map("{:02x}".format, struct.unpack("!6B", payload[:6])))
 		if has_mask:
 			assert len(payload) == 12
@@ -343,6 +352,9 @@ def mac_str2bin(field):
 
 def ipv4_bin2str(name):
 	def bin2str(payload, has_mask):
+		if payload is None:
+			return name
+		
 		value = socket.inet_ntoa(payload[:4])
 		if has_mask:
 			assert len(payload) == 8
@@ -383,6 +395,9 @@ def ipv4_str2bin(field):
 
 def ipv6_bin2str(name):
 	def bin2str(payload, has_mask):
+		if payload is None:
+			return name
+		
 		value = socket.inet_ntop(socket.AF_INET6, payload[:16])
 		if has_mask:
 			assert len(payload) == 32
@@ -423,6 +438,9 @@ def ipv6_str2bin(field):
 
 
 def pkt_bin2str(payload, has_mask):
+	if payload is None:
+		return "packet_type"
+	
 	assert not has_mask
 	assert len(payload) == 4
 	return "packet_type={:#x}:{:#x}".format(*struct.unpack("!HH", payload))
@@ -444,6 +462,9 @@ def pkt_str2bin(unparsed):
 
 def hex_bin2str(name):
 	def bin2str(payload, has_mask):
+		if payload is None:
+			return name
+		
 		if has_mask:
 			split = len(payload)//2
 			return "{:s}={:s}/{:s}".format(name,
@@ -486,6 +507,9 @@ def hex_str2bin(field):
 
 
 def ssid_bin2str(payload, has_mask):
+	if payload is None:
+		return "dot11_ssid"
+	
 	if has_mask:
 		split = len(payload)//2
 		return "dot11_ssid={:s}/{:s}".format(
@@ -523,6 +547,9 @@ def ssid_str2bin(unparsed):
 
 def le_bin2str(fmt):
 	def bin2str(payload, has_mask):
+		if payload is None:
+			return fmt.split("=")[0]
+		
 		l = len(payload)
 		if has_mask:
 			value = L0
@@ -570,6 +597,9 @@ def le_str2bin(field, size):
 
 
 def rate_bin2str(payload, has_mask):
+	if payload is None:
+		return "radiotap_rate"
+	
 	assert not has_mask
 	rate = struct.unpack_from("!B", payload)[0]
 	if rate < 2:
@@ -599,6 +629,9 @@ def rate_str2bin(unparsed):
 
 
 def ch_bin2str(payload, has_mask):
+	if payload is None:
+		return "radiotap_channel"
+	
 	if has_mask:
 		assert len(payload) == 8
 		v = struct.unpack("!HHHH", payload)
@@ -647,18 +680,20 @@ def ch_str2bin(unparsed):
 
 
 def comp_bin2str(name, packs, fmts):
+	def collect(data):
+		ret = []
+		for n,fmt in zip(struct.unpack_from(packs, data), fmts):
+			if n == 0:
+				ret.append("")
+			else:
+				ret.append(fmt.format(n))
+		return ":".join(ret)
+	
 	def bin2str(payload, has_mask):
-		def collect(data):
-			ret = []
-			for n,fmt in zip(struct.unpack_from(packs, data), fmts):
-				if n == 0:
-					ret.append("")
-				else:
-					ret.append(fmt.format(n))
-			return ":".join(ret)
+		if payload is None:
+			return name
 		
-		ret = "{:s}=".format(name)
-		ret += collect(payload)
+		ret = "{:s}={:s}".format(name, collect(payload))
 		if has_mask:
 			ret += "/"
 			ret += collect(payload[struct.calcsize(packs):])
@@ -702,6 +737,10 @@ def comp_str2bin(field, packs):
 
 
 def vht_bin2str(payload, has_mask):
+	name = "radiotap_vht"
+	if payload is None:
+		return name
+	
 	packs = "<HBB4BBBH"
 	def collect(data):
 		ns = struct.unpack_from(packs, data)
@@ -722,8 +761,7 @@ def vht_bin2str(payload, has_mask):
 		ret += ":{:d}:{:#06x}".format(ns[8], ns[9])
 		return ret
 	
-	ret = "radiotap_vht="
-	ret += collect(payload)
+	ret = "{:s}={:s}".format(name, collect(payload))
 	if has_mask:
 		ret += "/"
 		ret += collect(payload[struct.calcsize(packs):])
@@ -765,6 +803,9 @@ def vht_str2bin(unparsed):
 
 def s8_bin2str(name):
 	def bin2str(payload, has_mask):
+		if payload is None:
+			return name
+		
 		assert not has_mask
 		return "{:s}={:d}".format(name, struct.unpack("<b", payload)[0])
 	
@@ -925,16 +966,16 @@ _str2bin["nxm_eth_dst"] = mac_str2bin(NXM_OF_ETH_DST)
 _bin2str[NXM_OF_ETH_SRC] = mac_bin2str("nxm_eth_src")
 _str2bin["nxm_eth_src"] = mac_str2bin(NXM_OF_ETH_SRC)
 
-_bin2str[NXM_OF_ETH_TYPE] = uint_bin2str("nxm_eth_type={:#04x}")
+_bin2str[NXM_OF_ETH_TYPE] = uint_bin2str("nxm_eth_type={:#06x}/{:#06x}")
 _str2bin["nxm_eth_type"] = uint_str2bin(NXM_OF_ETH_TYPE, 2)
 
-_bin2str[NXM_OF_VLAN_TCI] = uint_bin2str("nxm_vlan_tci={:#04x}")
+_bin2str[NXM_OF_VLAN_TCI] = uint_bin2str("nxm_vlan_tci={:#x}/{:#06x}")
 _str2bin["nxm_vlan_tci"] = uint_str2bin(NXM_OF_VLAN_TCI, 2)
 
-_bin2str[NXM_OF_IP_TOS] = uint_bin2str("nxm_ip_tos={:#x}")
+_bin2str[NXM_OF_IP_TOS] = uint_bin2str("nxm_ip_tos={:#x}/{:#x}")
 _str2bin["nxm_ip_tos"] = uint_str2bin(NXM_OF_IP_TOS, 1)
 
-_bin2str[NXM_OF_IP_PROTO] = uint_bin2str("nxm_ip_proto={:d}")
+_bin2str[NXM_OF_IP_PROTO] = uint_bin2str("nxm_ip_proto={:d}/{:d}")
 _str2bin["nxm_ip_proto"] = uint_str2bin(NXM_OF_IP_PROTO, 1)
 
 _bin2str[NXM_OF_IP_SRC] = ipv4_bin2str("nxm_ip_src")
@@ -943,25 +984,25 @@ _str2bin["nxm_ip_src"] = ipv4_str2bin(NXM_OF_IP_SRC)
 _bin2str[NXM_OF_IP_DST] = ipv4_bin2str("nxm_ip_dst")
 _str2bin["nxm_ip_dst"] = ipv4_str2bin(NXM_OF_IP_DST)
 
-_bin2str[NXM_OF_TCP_SRC] = uint_bin2str("nxm_tcp_src={:d}")
+_bin2str[NXM_OF_TCP_SRC] = uint_bin2str("nxm_tcp_src={:d}/{:d}")
 _str2bin["nxm_tcp_src"] = uint_str2bin(NXM_OF_TCP_SRC, 2)
 
-_bin2str[NXM_OF_TCP_DST] = uint_bin2str("nxm_tcp_dst={:d}")
+_bin2str[NXM_OF_TCP_DST] = uint_bin2str("nxm_tcp_dst={:d}/{:d}")
 _str2bin["nxm_tcp_dst"] = uint_str2bin(NXM_OF_TCP_DST, 2)
 
-_bin2str[NXM_OF_UDP_SRC] = uint_bin2str("nxm_udp_src={:d}")
+_bin2str[NXM_OF_UDP_SRC] = uint_bin2str("nxm_udp_src={:d}/{:d}")
 _str2bin["nxm_udp_src"] = uint_str2bin(NXM_OF_UDP_SRC, 2)
 
-_bin2str[NXM_OF_UDP_DST] = uint_bin2str("nxm_udp_dst={:d}")
+_bin2str[NXM_OF_UDP_DST] = uint_bin2str("nxm_udp_dst={:d}/{:d}")
 _str2bin["nxm_udp_dst"] = uint_str2bin(NXM_OF_UDP_DST, 2)
 
-_bin2str[NXM_OF_ICMP_TYPE] = uint_bin2str("nxm_icmp_type={:d}")
+_bin2str[NXM_OF_ICMP_TYPE] = uint_bin2str("nxm_icmp_type={:d}/{:d}")
 _str2bin["nxm_icmp_type"] = uint_str2bin(NXM_OF_ICMP_TYPE, 1)
 
-_bin2str[NXM_OF_ICMP_CODE] = uint_bin2str("nxm_icmp_code={:d}")
+_bin2str[NXM_OF_ICMP_CODE] = uint_bin2str("nxm_icmp_code={:d}/{:d}")
 _str2bin["nxm_icmp_code"] = uint_str2bin(NXM_OF_ICMP_CODE, 1)
 
-_bin2str[NXM_OF_ARP_OP] = uint_bin2str("nxm_arp_op={:#d}")
+_bin2str[NXM_OF_ARP_OP] = uint_bin2str("nxm_arp_op={:#d}/{:#d}")
 _str2bin["nxm_arp_op"] = uint_str2bin(NXM_OF_ARP_OP, 2)
 
 _bin2str[NXM_OF_ARP_SPA] = ipv4_bin2str("nxm_arp_spa")
@@ -1009,10 +1050,10 @@ _str2bin["nxm_ipv6_src"] = ipv6_str2bin(NXM_NX_IPV6_SRC)
 _bin2str[NXM_NX_IPV6_DST] = ipv6_bin2str("nxm_ipv6_dst")
 _str2bin["nxm_ipv6_dst"] = ipv6_str2bin(NXM_NX_IPV6_DST)
 
-_bin2str[NXM_NX_ICMPV6_TYPE] = uint_bin2str("nxm_icmpv6_type={:d}")
+_bin2str[NXM_NX_ICMPV6_TYPE] = uint_bin2str("nxm_icmpv6_type={:d}/{:d}")
 _str2bin["nxm_icmpv6_type"] = uint_str2bin(NXM_NX_ICMPV6_TYPE, 1)
 
-_bin2str[NXM_NX_ICMPV6_CODE] = uint_bin2str("nxm_icmpv6_code={:d}")
+_bin2str[NXM_NX_ICMPV6_CODE] = uint_bin2str("nxm_icmpv6_code={:d}/{:d}")
 _str2bin["nxm_icmpv6_code"] = uint_str2bin(NXM_NX_ICMPV6_CODE, 1)
 
 _bin2str[NXM_NX_ND_TARGET] = ipv6_bin2str("nxm_nd_target")
@@ -1024,16 +1065,16 @@ _str2bin["nxm_nd_sll"] = mac_str2bin(NXM_NX_ND_SLL)
 _bin2str[NXM_NX_ND_TLL] = mac_bin2str("nxm_nd_tll")
 _str2bin["nxm_nd_tll"] = mac_str2bin(NXM_NX_ND_TLL)
 
-_bin2str[NXM_NX_IP_FRAG] = uint_bin2str("nxm_icmp_type={:d}")
+_bin2str[NXM_NX_IP_FRAG] = uint_bin2str("nxm_icmp_type={:d}/{:d}")
 _str2bin["nxm_ip_frag"] = uint_str2bin(NXM_NX_IP_FRAG, 1)
 
 _bin2str[NXM_NX_IPV6_LABEL] = uint_bin2str("nxm_ipv6_label={:#x}/{:#x}")
 _str2bin["nxm_ipv6_label"] = uint_str2bin(NXM_NX_IPV6_LABEL, 4)
 
-_bin2str[NXM_NX_IP_ECN] = uint_bin2str("nxm_ip_ecn={:#x}")
+_bin2str[NXM_NX_IP_ECN] = uint_bin2str("nxm_ip_ecn={:#x}/{:#x}")
 _str2bin["nxm_ip_ecn"] = uint_str2bin(NXM_NX_IP_ECN, 1)
 
-_bin2str[NXM_NX_IP_TTL] = uint_bin2str("nxm_ip_ttl={:d}")
+_bin2str[NXM_NX_IP_TTL] = uint_bin2str("nxm_ip_ttl={:d}/{:d}")
 _str2bin["nxm_ip_ttl"] = uint_str2bin(NXM_NX_IP_TTL, 1)
 
 _bin2str[NXM_NX_TUN_IPV4_SRC] = ipv4_bin2str("nxm_tun_ipv4_src")
@@ -1045,19 +1086,19 @@ _str2bin["nxm_tun_ipv4_dst"] = ipv4_str2bin(NXM_NX_TUN_IPV4_DST)
 _bin2str[NXM_NX_PKT_MARK] = uint_bin2str("nxm_pkt_mark={:#x}/{:#x}")
 _str2bin["nxm_pkt_mark"] = uint_str2bin(NXM_NX_PKT_MARK, 4)
 
-_bin2str[NXM_NX_TCP_FLAGS] = uint_bin2str("nxm_tcp_flags={:#04x}/{:#04x}")
+_bin2str[NXM_NX_TCP_FLAGS] = uint_bin2str("nxm_tcp_flags={:#06x}/{:#06x}")
 _str2bin["nxm_tcp_flags"] = uint_str2bin(NXM_NX_TCP_FLAGS, 2)
 
-_bin2str[NXM_NX_DP_HASH] = uint_bin2str("nxm_dp_hash={:#06x}")
+_bin2str[NXM_NX_DP_HASH] = uint_bin2str("nxm_dp_hash={:#010x}/{:#010x}")
 _str2bin["nxm_dp_hash"] = uint_str2bin(NXM_NX_DP_HASH, 4)
 
-_bin2str[NXM_NX_RECIRC_ID] = uint_bin2str("nxm_recirc_id={:#06x}")
+_bin2str[NXM_NX_RECIRC_ID] = uint_bin2str("nxm_recirc_id={:#010x}/{:#010x}")
 _str2bin["nxm_recirc_id"] = uint_str2bin(NXM_NX_RECIRC_ID, 4)
 
-_bin2str[NXM_NX_CONJ_ID] = uint_bin2str("nxm_conj_id={:#06x}")
+_bin2str[NXM_NX_CONJ_ID] = uint_bin2str("nxm_conj_id={:#010x}/{:#010x}")
 _str2bin["nxm_conj_id"] = uint_str2bin(NXM_NX_CONJ_ID, 4)
 
-_bin2str[NXM_NX_TUN_GBP_ID] = uint_bin2str("nxm_tun_gbp_id={:#04x}/{:#04x}")
+_bin2str[NXM_NX_TUN_GBP_ID] = uint_bin2str("nxm_tun_gbp_id={:#06x}/{:#06x}")
 _str2bin["nxm_tun_gbp_id"] = uint_str2bin(NXM_NX_TUN_GBP_ID, 2)
 
 _bin2str[NXM_NX_TUN_GBP_FLAGS] = uint_bin2str("nxm_tun_gbp_flags={:#x}/{:#x}")
@@ -1162,25 +1203,53 @@ _str2bin["radiotap_vht"] = vht_str2bin
 
 def oxm2str(msg, loop=True):
 	tokens = []
-	while len(msg) > 4:
+	while len(msg) >= 4:
 		(kls,f1,l) = struct.unpack_from("!HBB", msg)
-		if kls == OFPXMC_OPENFLOW_BASIC:
-			tokens.append(_bin2str[f1>>1](msg[4:4+l], (f1&1)==1))
-		elif kls == OFPXMC_NXM_0:
-			tokens.append(_bin2str[nxm_of(f1>>1)](msg[4:4+l], (f1&1)==1))
-		elif kls == OFPXMC_NXM_1:
-			tokens.append(_bin2str[nxm_nx(f1>>1)](msg[4:4+l], (f1&1)==1))
-		elif kls == OFPXMC_EXPERIMENTER:
+		if kls == OFPXMC_EXPERIMENTER:
 			exp = struct.unpack_from("!I", msg, 4)[0]
 			if exp == STRATOS_EXPERIMENTER_ID:
 				tokens.append(_bin2str[stratos(f1>>1)](msg[8:4+l], (f1&1)==1))
 			else:
 				tokens.append("?") # unknown experimenter id
+		elif kls == OFPXMC_OPENFLOW_BASIC:
+			tokens.append(_bin2str[f1>>1](msg[4:4+l], (f1&1)==1))
+		elif kls == OFPXMC_NXM_0:
+			tokens.append(_bin2str[nxm_of(f1>>1)](msg[4:4+l], (f1&1)==1))
+		elif kls == OFPXMC_NXM_1:
+			tokens.append(_bin2str[nxm_nx(f1>>1)](msg[4:4+l], (f1&1)==1))
 		else:
 			tokens.append("?") # unknown oxm class {:x}".format(kls)
 		
 		if loop:
 			msg = msg[4+l:]
+		else:
+			break
+	
+	return ",".join(tokens)
+
+def oxmid2str(msg, loop=True):
+	tokens = []
+	while len(msg) >= 4:
+		rlen = 4
+		(kls,f1,l) = struct.unpack_from("!HBB", msg)
+		if kls == OFPXMC_EXPERIMENTER:
+			rlen = 8
+			exp = struct.unpack_from("!I", msg, 4)[0]
+			if exp == STRATOS_EXPERIMENTER_ID:
+				tokens.append(_bin2str[stratos(f1>>1)](None, (f1&1)==1))
+			else:
+				tokens.append("?") # unknown experimenter id
+		elif kls == OFPXMC_OPENFLOW_BASIC:
+			tokens.append(_bin2str[f1>>1](None, (f1&1)==1))
+		elif kls == OFPXMC_NXM_0:
+			tokens.append(_bin2str[nxm_of(f1>>1)](None, (f1&1)==1))
+		elif kls == OFPXMC_NXM_1:
+			tokens.append(_bin2str[nxm_nx(f1>>1)](None, (f1&1)==1))
+		else:
+			tokens.append("?") # unknown oxm class {:x}".format(kls)
+		
+		if loop:
+			msg = msg[rlen:]
 		else:
 			break
 	
