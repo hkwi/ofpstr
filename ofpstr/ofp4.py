@@ -1,5 +1,5 @@
 import struct
-from .util import ofpp, parseInt, get_token, parse_func, parse_bits, split
+from .util import ofpp, parseInt, get_token, parse_func, split
 from .oxm import str2oxm, oxm2str, str2oxmid, oxmid2str
 
 align8 = lambda x:(x+7)//8*8
@@ -270,8 +270,6 @@ def action_reg_load_act2str(payload):
 		for s in range(size):
 			u = chr((value>>(s*8))&0xff)+u
 		
-		import binascii
-		print binascii.b2a_hex(struct.pack("!HBB", oxm_class, oxm_field|0x1, size*2)+u)
 		arg = oxm2str(struct.pack("!HBB", oxm_class, oxm_field|0x1, size*2)+u)
 	
 	return "reg_load({:s})".format(arg)
@@ -279,12 +277,61 @@ def action_reg_load_act2str(payload):
 def action_reg_load2_act2str(payload):
 	return "reg_load2({:s})".format(oxm2str(payload, loop=False))
 
+@_nxast_str2act
+def action_reg_move_str2act(unparsed, readarg):
+	if readarg:
+		raise ValueError("reg_move argument error")
+	
+	total = len(unparsed)
+	def get_bits(unparsed):
+		h1,F,unparsed = get_token(unparsed)
+		name,arg = parse_func(F)
+		oxmid = str2oxmid(name, has_mask=False, loop=False)
+		oxm_class,oxm_field,oxm_length = struct.unpack_from("!HBB", oxmid)
+		size = oxm_length
+		if oxm_class == 0xffff:
+			size = oxm_length-4
+		
+		shift = 0
+		nbits = size*8
+		if arg:
+			shift,limit = map(lambda x: int(x) if len(x) else None, arg.split(":", 1))
+			if shift is None:
+				shift = 0
+			if limit is None:
+				limit = size*8
+			nbits = limit - shift
+		return (oxmid, shift, nbits), unparsed
+	
+	L,unparsed = get_bits(unparsed)
+	R,unparsed = get_bits(unparsed)
+	assert L[2] == R[2]
+	
+	return _nxast_hdr(NXAST_REG_MOVE)+struct.pack(
+		"!HHH", L[2], R[1], L[1])+R[0]+L[0], total-len(unparsed)
+
+def action_reg_move_act2str(payload):
+	n_bits, src_ofs, dst_ofs = struct.unpack_from("!HHH", payload)
+	src = oxmid2str(payload[6:], loop=False)
+	sinfo = struct.unpack_from("!HBB", payload, 6)
+	if src_ofs == 0 and n_bits == sinfo[2]*8:
+		arg = src
+	else:
+		arg = "{:s}[{:d}:{:d}]".format(src, src_ofs, src_ofs+n_bits)
+	
+	doffset = 10
+	if sinfo[0] == 0xffff:
+		doffset = 14
+	dst = oxmid2str(payload[doffset:], loop=False)
+	dinfo = struct.unpack_from("!HBB", payload, doffset)
+	if dst_ofs == 0 and n_bits == sinfo[2]*8:
+		arg = dst+"="+arg
+	else:
+		arg = "{:s}[{:d}:{:d}]={:s}".format(dst, dst_ofs, dst_ofs+n_bits, arg)
+	
+	return "reg_move({:s})".format(arg)
+
 #
-# cnt_ids=id1:id2:id3
-# reg_load=0xFE:eth_dst[0:2]
-# reg_load2=0xFE:dot11_addr1[0:2]
-# reg_move=eth_dst[0:2]:eth_src[0:2]
-# reg_move=nxm_reg0[0:4]:nxm_reg1[0:4]
 # resubmit=in_port
 # resubmit_table=in_port:all
 # set_tunnel=0xff
@@ -351,6 +398,9 @@ _act2str[NXAST_REG_LOAD] = action_reg_load_act2str
 
 _str2act["reg_load2"] = action_reg_load_str2act(NXAST_REG_LOAD2)
 _act2str[NXAST_REG_LOAD2] = action_reg_load2_act2str
+
+_str2act["reg_move"] = action_reg_move_str2act
+_act2str[NXAST_REG_MOVE] = action_reg_move_act2str
 
 def str2act(s):
 	h,name,arg = get_token(s)

@@ -88,13 +88,6 @@ def parse_func(nojunk):
 	
 	return name, None
 
-def parse_bits(nojunk):
-	name, args = parse_func(nojunk)
-	if args:
-		ns = map(lambda x: int(x) if len(x) else None, args.split(":", 1))
-		return name, ns[0], ns[1]
-	return name, None, None
-
 def longest(s, char_set):
 	'''returns the maximum continuous length of string, which is made from char_set.'''
 	i = 0
