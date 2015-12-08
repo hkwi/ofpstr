@@ -33,6 +33,9 @@ class TestRoundTrip(unittest.TestCase):
 		"set_tunnel64(0x1122334455667788)",
 		"pop_queue",
 		"note(openflow)",
+		"multipath(eth_src,50,hrw,12,0x0,nxm_reg0[0:4])",
+		"bundle(eth_src,50,active_backup,nxm_in_port,slaves(1,2,3))",
+		"bundle_load(symmetric_l4,60,hrw,nxm_in_port,nxm_reg0[0:16],slaves(2,3))",
 #		"learn(nxm_in_port=99,nxm_eth_dst=nxm_eth_src,reg_load(nxm_reg1[16:32],nxm_in_port)",
 		)
 	flows = (
