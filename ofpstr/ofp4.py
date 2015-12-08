@@ -1,3 +1,4 @@
+import binascii
 import struct
 from .util import ofpp, parseInt, get_token, parse_func, split
 from .oxm import str2oxm, oxm2str, str2oxmid, oxmid2str
@@ -157,8 +158,7 @@ for n,name in nxast_names.items():
 	globals()["NXAST_{:s}".format(name.upper())] = nxast(n)
 
 def _pad8(bin):
-	l = (len(bin)+7)//8*8
-	return bin+bytes(bytearray(l-len(bin)))
+	return bin+bytes(bytearray(align8(len(bin))-len(bin)))
 
 def _nxast_hdr(subtype):
 	return struct.pack("!HHIH", OFPAT_EXPERIMENTER, 10, NX_VENDOR_ID, subtype)
@@ -375,9 +375,71 @@ def action_resubmit_table_act2str(payload):
 		table = "{:d}".format(tbl)
 	return "resubmit_table({:s},{:s})".format(port, table)
 
+def action_set_tunnel_str2act(subtype):
+	@_nxast_str2act
+	def str2act(unparsed, readarg):
+		h,b,unparsed = get_token(unparsed)
+		if readarg:
+			assert "=" in h
+		num, rlen = parseInt(b)
+		assert rlen==len(b)
+		fmt = "!I"
+		stype = subtype
+		if num > 0xffffffff:
+			stype = NXAST_SET_TUNNEL64
+			fmt = "!Q"
+		
+		return _nxast_hdr(stype)+struct.pack(fmt, num), len(h)+len(b)
+	return str2act
+
+def action_set_tunnel_act2str(size, fmt):
+	def act2str(payload):
+		if size==4:
+			num = struct.unpack_from("!I", payload)[0]
+		elif size==8:
+			num = struct.unpack_from("!Q", payload)[0]
+		return fmt.format(num)
+	return act2str
+
+def action_null_str2act(subtype):
+	@_nxast_str2act
+	def str2act(unparsed, readarg):
+		return _nxast_hdr(subtype), 0
+	return str2act
+
+def action_null_act2str(fmt):
+	def act2str(payload):
+		return fmt
+	return act2str
+
+def action_qp_str2act(subtype):
+	def str2act(unparsed, readarg):
+		h,b,unparsed = get_token(unparsed)
+		if readarg:
+			assert "=" in h
+		return _fix_act_len(_nxast_hdr(subtype)+binascii.a2b_qp(b)), len(h)+len(b)
+	return str2act
+
+def action_qp_act2str(fmt):
+	def act2str(payload):
+		return fmt.format(binascii.b2a_qp(payload))
+	return act2str
+
+
 #
-# set_tunnel=0xff
-# pop_queue
+# multipath
+# bundle
+# bundle_load
+# output_reg
+# output_reg2
+# learn
+# fin_timeout
+# controller
+# write_metadata
+# stack_push
+# stack_pop
+# sample
+# conjunction
 #
 
 
@@ -450,6 +512,20 @@ _act2str[NXAST_RESUBMIT] = action_resubmit_act2str
 _str2act["resubmit_table"] = action_resubmit_str2act(NXAST_RESUBMIT_TABLE)
 _act2str[NXAST_RESUBMIT_TABLE] = action_resubmit_table_act2str
 
+_str2act["set_tunnel"] = action_set_tunnel_str2act(NXAST_SET_TUNNEL)
+_act2str[NXAST_SET_TUNNEL] = action_set_tunnel_act2str(4, "set_tunnel({:#x})")
+
+_str2act["set_tunnel64"] = action_set_tunnel_str2act(NXAST_SET_TUNNEL64)
+_act2str[NXAST_SET_TUNNEL64] = action_set_tunnel_act2str(8, "set_tunnel64({:#x})")
+
+_str2act["pop_queue"] = action_null_str2act(NXAST_POP_QUEUE)
+_act2str[NXAST_POP_QUEUE] = action_null_act2str("pop_queue")
+
+_str2act["note"] = action_qp_str2act(NXAST_NOTE)
+_act2str[NXAST_NOTE] = action_qp_act2str("note({:s})")
+
+_str2act["exit"] = action_null_str2act(NXAST_EXIT)
+_act2str[NXAST_EXIT] = action_null_act2str("exit")
 
 def str2act(s):
 	h,name,arg = get_token(s)

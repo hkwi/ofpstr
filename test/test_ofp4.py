@@ -29,6 +29,10 @@ class TestRoundTrip(unittest.TestCase):
 		"resubmit(1)",
 		"resubmit_table(in_port,all)",
 		"resubmit_table(1,1)",
+		"set_tunnel(0x11223344)",
+		"set_tunnel64(0x1122334455667788)",
+		"pop_queue",
+		"note(openflow)",
 #		"learn(nxm_in_port=99,nxm_eth_dst=nxm_eth_src,reg_load(nxm_reg1[16:32],nxm_in_port)",
 		)
 	flows = (

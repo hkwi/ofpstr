@@ -512,11 +512,15 @@ def ssid_bin2str(payload, has_mask):
 	
 	if has_mask:
 		split = len(payload)//2
+		name = payload[:split]
+		while name[-1]==b"\0":
+			name = name[:-1]
+		
 		return "dot11_ssid={:s}/{:s}".format(
-			payload[:split].decode("UTF-8").partition("\0")[0],
+			binascii.b2a_qp(name),
 			binascii.b2a_hex(payload[split:]).decode("UTF-8"))
 	else:
-		return "dot11_ssid={:s}".format(payload.decode("UTF-8").partition("\0")[0])
+		return "dot11_ssid={:s}".format(binascii.b2a_qp(payload))
 
 
 def ssid_str2bin(unparsed):
@@ -528,7 +532,7 @@ def ssid_str2bin(unparsed):
 		h, txt, unparsed = get_token(unparsed)
 		rlen = len(h) + len(txt)
 		vm = txt.split("/")
-		payload = vm[0].encode("UTF-8")
+		payload = binascii.a2b_qp(vm[0])
 		length = len(payload)
 		if len(vm) > 1:
 			has_mask = True
