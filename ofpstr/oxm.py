@@ -3,7 +3,7 @@ import re
 import socket
 import binascii
 
-from .util import get_token, parseInt, parseFloat, ofpp
+from .util import get_token, parseInt, parseFloat, ofpp, int2bytes
 
 try:
 	L0 = long(0)
@@ -248,14 +248,12 @@ def uint_str2bin(field, size):
 		payload = b""
 		if isinstance(unparsed, str):
 			num,rlen = parseInt(unparsed)
-			for s in reversed(range(size)):
-				payload += chr(0xFF & (num>>(8*s)))
+			payload += int2bytes([(num>>(8*s))&0xff for s in reversed(range(size))])
 			
 			if unparsed[rlen:].startswith("/"):
 				has_mask = True
 				num,e = parseInt(unparsed[rlen+1:])
-				for s in reversed(range(size)):
-					payload += chr(0xFF & (num>>(8*s)))
+				payload += int2bytes([(num>>(8*s))&0xff for s in reversed(range(size))])
 				rlen += 1 + e
 		elif unparsed:
 			has_mask = True
@@ -516,15 +514,16 @@ def ssid_bin2str(payload, has_mask):
 	
 	if has_mask:
 		split = len(payload)//2
-		name = payload[:split]
-		while name[-1]==b"\0":
+		name = bytearray(payload[:split])
+		while name[-1] == 0:
 			name = name[:-1]
+		name = bytes(name)
 		
 		return "dot11_ssid={:s}/{:s}".format(
-			binascii.b2a_qp(name),
+			binascii.b2a_qp(name).decode("UTF-8"),
 			binascii.b2a_hex(payload[split:]).decode("UTF-8"))
 	else:
-		return "dot11_ssid={:s}".format(binascii.b2a_qp(payload))
+		return "dot11_ssid={:s}".format(binascii.b2a_qp(payload).decode("UTF-8"))
 
 
 def ssid_str2bin(unparsed):
@@ -587,8 +586,7 @@ def le_str2bin(field, size):
 		has_mask = False
 		if isinstance(unparsed, str):
 			num,rlen = parseInt(unparsed)
-			for s in range(size):
-				payload += chr(0xFF & (num>>(8*s)))
+			payload += int2bytes([0xFF & (num>>(8*s)) for s in range(size)])
 			
 			if unparsed[rlen:].startswith("/"):
 				has_mask = True

@@ -137,3 +137,9 @@ def parseFloat(unparsed):
 		l += l2+1
 	
 	return ret, l
+
+try:
+	unichr(0)
+	int2bytes = lambda seq: b"".join(map(chr, seq))
+except:
+	int2bytes = bytes

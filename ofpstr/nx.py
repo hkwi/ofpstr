@@ -1,7 +1,12 @@
 import binascii
 import struct
-from .util import ofpp, parseInt, get_token, split, parse_func
+from .util import ofpp, parseInt, get_token, split, parse_func, int2bytes
 from .oxm import str2oxm, oxm2str, str2oxmid, oxmid2str
+
+try:
+	inttypes = (int, long)
+except:
+	inttypes = (int, )
 
 align8 = lambda x:(x+7)//8*8
 
@@ -100,7 +105,7 @@ def action_cnt_ids_str2act(unparsed, readarg):
 	else:
 		ids = split(unparsed)
 		length = 0
-	ids = map(lambda x: parseInt(x)[0], ids)
+	ids = list(map(lambda x: parseInt(x)[0], ids))
 	return _nxast_hdr(NXAST_CNT_IDS)+struct.pack("!H4x{:d}H".format(len(ids)), len(ids), *ids), length
 
 def action_cnt_ids_act2str(payload):
@@ -128,8 +133,7 @@ def action_reg_load_str2act(subtype):
 				size = len(payload)//2
 				mask = payload[size:]
 				payload = payload[:size]
-				for m in reversed(mask):
-					v = ord(m)
+				for v in reversed(bytearray(mask)):
 					for d in range(8):
 						if v & (1<<d):
 							if nbits is None:
@@ -144,8 +148,8 @@ def action_reg_load_str2act(subtype):
 				nbits = size * 8
 			
 			value = 0
-			for p in payload:
-				value = (value<<8) + ord(p)
+			for p in bytearray(payload):
+				value = (value<<8) + p
 			
 			value = value>>shift
 			return _nxast_hdr(NXAST_REG_LOAD)+struct.pack("!HHBBQ",
@@ -167,9 +171,7 @@ def action_reg_load_act2str(payload):
 	nbits = (ofs_nbits & 0x3f) + 1
 	if shift == 0 and nbits == size*8:
 		has_mask = False
-		u = b""
-		for s in range(size):
-			u = chr(value>>(s*8))+u
+		u = int2bytes([(value>>(s*8))&0xff for s in reversed(range(size))])
 		arg = oxm2str(oxmid+u)
 	else:
 		value = value<<shift
@@ -179,12 +181,11 @@ def action_reg_load_act2str(payload):
 		for s in range(shift):
 			mask = mask<<1
 		
-		u = b""
-		for s in range(size):
-			u = chr((mask>>(s*8))&0xff)+u
-		for s in range(size):
-			u = chr((value>>(s*8))&0xff)+u
-		
+		u = int2bytes([
+			(value>>(s*8))&0xff for s in reversed(range(size))
+			]+[
+			(mask>>(s*8))&0xff for s in reversed(range(size))
+			])
 		arg = oxm2str(struct.pack("!HBB", oxm_class, oxm_field|0x1, size*2)+u)
 	
 	return "reg_load({:s})".format(arg)
@@ -317,7 +318,7 @@ def action_qp_str2act(subtype):
 
 def action_qp_act2str(fmt):
 	def act2str(payload):
-		return fmt.format(binascii.b2a_qp(payload))
+		return fmt.format(binascii.b2a_qp(payload).decode("UTF-8"))
 	return act2str
 
 @_nxast_str2act
@@ -440,7 +441,7 @@ def action_bundle_load_str2act(unparsed, readarg):
 	dname, dargs = parse_func(dst)
 	doxmid = str2oxmid(dname, loop=False)
 	if dargs:
-		r = map(int, dargs.split(":", 1))
+		r = list(map(int, dargs.split(":", 1)))
 	else:
 		cls,field,size=struct.unpack("!HBB", doxmid)
 		r = [0, size*8]
@@ -507,7 +508,7 @@ def action_output_reg_str2act(subtype):
 		name, arg = parse_func(arg)
 		oxmid = str2oxmid(name, loop=False, has_mask=False)
 		if arg:
-			r = map(int, arg.split(":", 1))
+			r = list(map(int, arg.split(":", 1)))
 		else:
 			cls,field,size = struct.unpack_from("!HBB", oxmid)
 			r = [0, size*8]
@@ -587,7 +588,7 @@ def action_learn_str2act(unparsed, readarg):
 			_,_,size = struct.unpack("!HBB", soxm)
 			sshift = 0
 			if sarg:
-				r = map(lambda n: int(n) if n else None, sarg.split(":", 1))
+				r = list(map(lambda n: int(n) if n else None, sarg.split(":", 1)))
 				if r[0] is not None:
 					sshift = r[0]
 				if r[1] is None:
@@ -603,7 +604,7 @@ def action_learn_str2act(unparsed, readarg):
 		
 		if mode == "output":
 			flags += 2<<DST_SHIFT
-			if isinstance(sobj, int):
+			if isinstance(sobj, inttypes):
 				nbits = 2
 				return struct.pack("!HH", flags+nbits, sobj)
 			else:
@@ -616,7 +617,7 @@ def action_learn_str2act(unparsed, readarg):
 		dnbits = size*8
 		dshift = 0
 		if darg:
-			r = map(lambda n: int(n) if n else None, darg.split(":", 1))
+			r = list(map(lambda n: int(n) if n else None, darg.split(":", 1)))
 			if r[0] is not None:
 				dshift = r[0]
 			if r[1] is not None:
@@ -627,11 +628,8 @@ def action_learn_str2act(unparsed, readarg):
 			nbits = dnbits
 		
 		dbin = doxm+struct.pack("!H", dshift)
-		if isinstance(sobj, (int,long)):
-			sbin = b""
-			for s in range((nbits+15)//16*2):
-				sbin = chr((sobj>>(s*8))&0xff) + sbin
-			sobj = sbin
+		if isinstance(sobj, inttypes):
+			sobj = int2bytes([(sobj>>(s*8))&0xff for s in reversed(range((nbits+15)//16*2))])
 		
 		if mode == "reg_load":
 			flags += 1<<DST_SHIFT
@@ -710,8 +708,8 @@ def action_learn_act2str(payload):
 		if src:
 			rlen = (nbits+15)//16*2
 			n = 0
-			for i in payload[:rlen]:
-				n = (n<<8) + ord(i)
+			for i in bytearray(payload[:rlen]):
+				n = (n<<8) + i
 			payload = payload[rlen:]
 			sobj = n
 		else:
@@ -727,7 +725,7 @@ def action_learn_act2str(payload):
 					shift+nbits)
 		
 		if dst != 2:
-			if isinstance(sobj, (int,long)):
+			if isinstance(sobj, inttypes):
 				sobj = "{:#x}".format(sobj)
 			
 			dname = oxmid2str(payload, loop=False)
@@ -745,7 +743,7 @@ def action_learn_act2str(payload):
 			elif dst == 1:
 				spec = "reg_load({:s}={:s})".format(dobj, sobj)
 		else:
-			if isinstance(sobj, (int,long)):
+			if isinstance(sobj, inttypes):
 				sobj = "{:d}".format(sobj)
 			
 			spec= "output({:s})".format(sobj)
@@ -762,7 +760,6 @@ def register_nxast(str2act, act2str):
 	act2str.update(_act2str)
 
 #
-# learn
 # fin_timeout
 # controller
 # write_metadata
