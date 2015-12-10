@@ -63,11 +63,21 @@ def get_token(unparsed):
 
 def split(unparsed):
 	ret = []
-	while unparsed:
-		h,b,unparsed = get_token(unparsed)
-		if not b:
-			break
-		ret.append(b)
+	tok = ""
+	reader = iter(unparsed)
+	for c in reader:
+		if is_delimiter(c):
+			if tok:
+				ret.append(tok)
+			tok = ""
+		elif c in pars:
+			p, r = scan_paren(pars[c])(reader)
+			tok += p+r
+		else:
+			tok += c
+	if tok:
+		ret.append(tok)
+	
 	return ret
 
 def parse_func(nojunk):

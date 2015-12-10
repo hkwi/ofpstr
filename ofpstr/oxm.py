@@ -265,38 +265,42 @@ def uint_str2bin(field, size):
 	return str2bin
 
 
-def port_bin2str(name):
+def port_bin2str(name, fmt="!I"):
+	size = struct.calcsize(fmt)
+	mask = (1<<size*8) - 1
 	def bin2str(payload, has_mask):
 		if payload is None:
 			return name
 		
 		assert not has_mask, "{:s} does not take mask".format(name)
-		assert len(payload) == 4, repr(payload)
-		num = struct.unpack_from("!I", payload)[0]
-		if num in ofpp:
-			return "{:s}={:s}".format(name, ofpp[num])
-		else:
-			return "{:s}={:d}".format(name, num)
+		assert len(payload) == size, repr(payload)
+		num = struct.unpack_from(fmt, payload)[0]
+		for p,port in ofpp.items():
+			if p&mask == num:
+				return "{:s}={:s}".format(name, port)
+		return "{:s}={:d}".format(name, num)
 	
 	return bin2str
 
 
-def port_str2bin(field):
+def port_str2bin(field, fmt="!I"):
+	size = struct.calcsize(fmt)
+	mask = (1<<size*8) - 1
 	def str2bin(unparsed):
 		rlen = 0
 		payload = b""
 		if isinstance(unparsed, str):
-			num = None
 			for (v,name) in ofpp.items():
 				for nm in (name.lower(), name.upper()):
 					if unparsed.startswith(nm):
-						num = v
 						rlen = len(name)
-			if num is None:
+						payload = struct.pack(fmt, v&mask)
+						break
+			if not payload:
 				num, rlen = parseInt(unparsed)
-			payload = struct.pack("!I", num)
+				payload = struct.pack(fmt, num)
 		
-		return header(field, 4, False)+payload, rlen
+		return header(field, size, False)+payload, rlen
 	
 	return str2bin
 
@@ -961,8 +965,8 @@ _str2bin["actset_output"] = port_str2bin(OXM_OF_ACTSET_OUTPUT)
 _bin2str[OXM_OF_PACKET_TYPE] = pkt_bin2str
 _str2bin["packet_type"] = pkt_str2bin
 
-_bin2str[NXM_OF_IN_PORT] = port_bin2str("nxm_in_port")
-_str2bin["nxm_in_port"] = port_str2bin(NXM_OF_IN_PORT)
+_bin2str[NXM_OF_IN_PORT] = port_bin2str("nxm_in_port", fmt="!H")
+_str2bin["nxm_in_port"] = port_str2bin(NXM_OF_IN_PORT, fmt="!H")
 
 _bin2str[NXM_OF_ETH_DST] = mac_bin2str("nxm_eth_dst")
 _str2bin["nxm_eth_dst"] = mac_str2bin(NXM_OF_ETH_DST)
@@ -1287,7 +1291,7 @@ def str2oxmid(unparsed, loop=True, has_mask=True):
 		head,name,unparsed = get_token(unparsed)
 		if name == "_":
 			pass
-		else:
+		elif name in _str2bin:
 			bin,length = _str2bin[name](has_mask)
 			assert length == 0
 			ret += bin

@@ -443,7 +443,7 @@ def action_bundle_load_str2act(unparsed, readarg):
 		r = map(int, dargs.split(":", 1))
 	else:
 		cls,field,size=struct.unpack("!HBB", doxmid)
-		r = [0, size]
+		r = [0, size*8]
 	
 	sname, sargs = parse_func(slave)
 	assert sname == "slaves"
@@ -498,6 +498,262 @@ def action_bundle_load_act2str(payload):
 		",".join(slaves),
 		)
 
+def action_output_reg_str2act(subtype):
+	@_nxast_str2act
+	def str2act(unparsed, readarg):
+		total = len(unparsed)
+		# output_reg(<src>[<start>:<end>])
+		h,arg,unparsed = get_token(unparsed)
+		name, arg = parse_func(arg)
+		oxmid = str2oxmid(name, loop=False, has_mask=False)
+		if arg:
+			r = map(int, arg.split(":", 1))
+		else:
+			cls,field,size = struct.unpack_from("!HBB", oxmid)
+			r = [0, size*8]
+		
+		max_len = 0xffff
+		h,arg,unparsed = get_token(unparsed)
+		if len(arg) and max_len:
+			max_len,rlen = parseInt(arg)
+		
+		stype = subtype
+		if len(oxmid) > 4:
+			stype = NXAST_OUTPUT_REG2
+		
+		if stype == NXAST_OUTPUT_REG:
+			parts = [_nxast_hdr(stype),
+				struct.pack("!H", (r[0]<<6)+((r[1]&0x3f)-1)),
+				oxmid,
+				struct.pack("!H", max_len),
+				b"\0"*6]
+			return b"".join(parts), total-len(unparsed)
+		elif stype == NXAST_OUTPUT_REG2:
+			parts = [_nxast_hdr(stype),
+				struct.pack("!HH", (r[0]<<6)+((r[1]&0x3f)-1), max_len),
+				oxmid]
+			return b"".join(parts), total-len(unparsed)
+	return str2act
+
+def action_output_reg_act2str(payload):
+	f = struct.unpack_from("!HHBBH6x", payload)
+	shift = f[0]>>6
+	nbits = (f[0]&0x3f)+1
+	size = f[3]
+	name = oxmid2str(payload[2:6], loop=False)
+	if shift == 0 and nbits == size*8:
+		return "output_reg({:s})".format(name)
+	else:
+		return "output_reg({:s}[{:d}:{:d}])".format(
+			name, shift, shift+nbits)
+
+def action_output_reg2_act2str(payload):
+	f = struct.unpack_from("!HHHBB", payload)
+	shift = f[0]>>6
+	nbits = (f[0]&0x3f)+1
+	size = f[4]
+	name = oxmid2str(payload[4:], loop=False)
+	if shift == 0 and nbits == size*8:
+		return "output_reg2({:s})".format(name)
+	else:
+		return "output_reg2({:s}[{:d}:{:d}])".format(
+			name, shift, shift+nbits)
+
+fixed_keys = '''idle_timeout
+	hard_timeout
+	priority
+	cookie
+	flags
+	table
+	fin_idle_timeout
+	fin_hard_timeout'''.split()
+
+@_nxast_str2act
+def action_learn_str2act(unparsed, readarg):
+	total = len(unparsed)
+	if readarg:
+		raise ValueError("learn must use func style")
+	
+	SRC_SHIFT = 12
+	DST_SHIFT = 10
+	def flow_mod_spec(src, dst, mode):
+		flags = 0
+		nbits = None
+		
+		sname,sarg = parse_func(src)
+		soxm = str2oxmid(sname, has_mask=False)
+		if soxm:
+			assert len(soxm) == 4
+			_,_,size = struct.unpack("!HBB", soxm)
+			sshift = 0
+			if sarg:
+				r = map(lambda n: int(n) if n else None, sarg.split(":", 1))
+				if r[0] is not None:
+					sshift = r[0]
+				if r[1] is None:
+					nbits = size*8 - sshift
+				else:
+					nbits = r[1] - sshift
+			else:
+				nbits = size*8
+			sobj = soxm+struct.pack("!H", sshift)
+		else:
+			sobj,_ = parseInt(sname)
+			flags |= 1<<SRC_SHIFT
+		
+		if mode == "output":
+			flags += 2<<DST_SHIFT
+			if isinstance(sobj, int):
+				nbits = 2
+				return struct.pack("!HH", flags+nbits, sobj)
+			else:
+				return struct.pack("!H", flags+nbits)+sobj
+		
+		dname,darg = parse_func(dst)
+		doxm = str2oxmid(dname, has_mask=False)
+		assert len(doxm) == 4
+		_,_,size = struct.unpack("!HBB", doxm)
+		dnbits = size*8
+		dshift = 0
+		if darg:
+			r = map(lambda n: int(n) if n else None, darg.split(":", 1))
+			if r[0] is not None:
+				dshift = r[0]
+			if r[1] is not None:
+				dnbits = r[1]-dshift
+		if nbits:
+			assert nbits == dnbits
+		else:
+			nbits = dnbits
+		
+		dbin = doxm+struct.pack("!H", dshift)
+		if isinstance(sobj, (int,long)):
+			sbin = b""
+			for s in range((nbits+15)//16*2):
+				sbin = chr((sobj>>(s*8))&0xff) + sbin
+			sobj = sbin
+		
+		if mode == "reg_load":
+			flags += 1<<DST_SHIFT
+		return struct.pack("!H", flags+nbits)+sobj+dbin
+	
+	info = {}
+	specs = b""
+	left = None
+	def single(token):
+		fname,farg = parse_func(token)
+		assert farg, left
+		_,dst,farg = get_token(farg)
+		h,src,farg = get_token(farg)
+		assert "=" in h
+		return flow_mod_spec(src, dst, fname)
+	
+	while unparsed:
+		h,arg,unparsed = get_token(unparsed)
+		if "=" in h:
+			if left in fixed_keys:
+				info[left],rlen = parseInt(arg)
+			else:
+				specs += flow_mod_spec(arg, left, None)
+			left = None
+		else:
+			if left:
+				specs += single(left)
+			left = arg
+	if left:
+		specs += single(left)
+	
+	return _nxast_hdr(NXAST_LEARN)+struct.pack("!HHHQHBxHH",
+		info.get("idle_timeout", 0),
+		info.get("hard_timeout", 0),
+		info.get("priority", 0),
+		info.get("cookie", 0),
+		info.get("flags", 0),
+		info.get("table", 0),
+		info.get("fin_idle_timeout", 0),
+		info.get("fin_hard_timeout", 0))+specs, total-len(unparsed)
+
+def action_learn_act2str(payload):
+	ret = []
+	
+	fixed = "!HHHQHBxHH"
+	f = struct.unpack_from(fixed, payload)
+	if f[0]:
+		ret.append("idle_timeout={:d}", f[0])
+	if f[1]:
+		ret.append("hard_timeout={:d}", f[1])
+	if f[2]:
+		ret.append("priority={:d}", f[2])
+	if f[3]:
+		ret.append("cookie={:#x}", f[3])
+	if f[4]:
+		ret.append("flags={:#x}", f[4])
+	if f[5]:
+		ret.append("table={:d}", f[5])
+	if f[6]:
+		ret.append("fin_idle_timeout={:d}", f[6])
+	if f[7]:
+		ret.append("fin_hard_timeout={:d}", f[7])
+	
+	payload = payload[struct.calcsize(fixed):]
+	specs = []
+	while len(payload)>2:
+		n = struct.unpack_from("!H", payload)[0]
+		if not n:
+			break
+		payload = payload[2:]
+		
+		nbits = n & 0x3ff
+		dst = (n>>10) & 0x03
+		src = (n>>12) & 0x01
+		assert (n>>13) == 0
+		if src:
+			rlen = (nbits+15)//16*2
+			n = 0
+			for i in payload[:rlen]:
+				n = (n<<8) + ord(i)
+			payload = payload[rlen:]
+			sobj = n
+		else:
+			sname = oxmid2str(payload, loop=False)
+			_,_,size,shift = struct.unpack_from("!HBBH", payload)
+			payload = payload[6:]
+			if shift==0 and size*8==nbits:
+				sobj = sname
+			else:
+				sobj = "{:s}[{:d}:{:d}]".format(
+					sname,
+					shift,
+					shift+nbits)
+		
+		if dst != 2:
+			if isinstance(sobj, (int,long)):
+				sobj = "{:#x}".format(sobj)
+			
+			dname = oxmid2str(payload, loop=False)
+			_,_,size,shift = struct.unpack_from("!HBBH", payload)
+			payload = payload[6:]
+			if shift==0 and size*8==nbits:
+				dobj = dname
+			else:
+				dobj = "{:s}[{:d}:{:d}]".format(
+					dname,
+					shift,
+					shift+nbits)
+			if dst == 0:
+				spec = "{:s}={:s}".format(dobj, sobj)
+			elif dst == 1:
+				spec = "reg_load({:s}={:s})".format(dobj, sobj)
+		else:
+			if isinstance(sobj, (int,long)):
+				sobj = "{:d}".format(sobj)
+			
+			spec= "output({:s})".format(sobj)
+		specs.append(spec)
+	
+	ret.append("learn({:s})".format(",".join(specs)))
+	return ",".join(ret)
+
 _str2act = {}
 _act2str = {}
 
@@ -506,9 +762,6 @@ def register_nxast(str2act, act2str):
 	act2str.update(_act2str)
 
 #
-# bundle_load
-# output_reg
-# output_reg2
 # learn
 # fin_timeout
 # controller
@@ -560,4 +813,13 @@ _act2str[NXAST_BUNDLE] = action_bundle_act2str
 
 _str2act["bundle_load"] = action_bundle_load_str2act
 _act2str[NXAST_BUNDLE_LOAD] = action_bundle_load_act2str
+
+_str2act["output_reg"] = action_output_reg_str2act(NXAST_OUTPUT_REG)
+_act2str[NXAST_OUTPUT_REG] = action_output_reg_act2str
+
+_str2act["output_reg2"] = action_output_reg_str2act(NXAST_OUTPUT_REG2)
+_act2str[NXAST_OUTPUT_REG2] = action_output_reg2_act2str
+
+_str2act["learn"] = action_learn_str2act
+_act2str[NXAST_LEARN] = action_learn_act2str
 
