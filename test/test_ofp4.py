@@ -60,6 +60,10 @@ class TestRoundTrip(unittest.TestCase):
 		"priority=20,idle_timeout=30,dot11=1,dot11_frame_ctrl=00/0f,dot11_addr2=01:23:45:67:89:01,@apply,output=controller",
 		"cookie=0x1/0xf,priority=4,buffer=0x1,idle_timeout=300,hard_timeout=300,vlan_vid=0x1,@apply,set_vlan_vid=0x2,output=3,@goto=3",
 		)
+	aliased_flows = [
+		("@apply,set_nxm_tun_ipv4_src(192.168.0.1),set_nxm_tun_ipv4_dst(192.168.0.2)",
+			"@apply,set_nxm_tun_ipv4_src=192.168.0.1,set_nxm_tun_ipv4_dst=192.168.0.2"),
+		]
 	def test_action(self):
 		for rule in self.actions:
 			msg, length = ofpstr.ofp4.str2act(rule)
@@ -69,6 +73,9 @@ class TestRoundTrip(unittest.TestCase):
 	def test_mod(self):
 		for flow in self.flows:
 			ret = ofpstr.ofp4.mod2str(ofpstr.ofp4.str2mod(flow))
+			assert ret == flow, ret
+		for aliased, flow in self.aliased_flows:
+			ret = ofpstr.ofp4.mod2str(ofpstr.ofp4.str2mod(aliased))
 			assert ret == flow, ret
 
 if __name__ == "__main__":

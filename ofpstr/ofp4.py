@@ -190,15 +190,17 @@ def str2act(s):
 		if farg:
 			op,payload,s = get_token(farg)
 			oxm,p = str2oxm(fname[4:]+"="+payload, loop=False)
+			consumed_length = len(h)+len(name)
 		else:
 			op,payload,s = get_token(arg)
 			oxm,p = str2oxm(name[4:]+op+payload, loop=False)
+			consumed_length = len(h)+4+p
 
 		l = align8(len(oxm)+4)
 		ret = bytearray(l)
 		ret[:4] = struct.pack("!HH", OFPAT_SET_FIELD, l)
 		ret[4:4+len(oxm)] = oxm
-		return bytes(ret), len(h)+4+p
+		return bytes(ret), consumed_length
 	else:
 		return b"", len(h)
 
