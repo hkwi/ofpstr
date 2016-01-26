@@ -94,7 +94,7 @@ Full oxm list follows:
 * comp mode: radiotap_mcs, radiotap_ampdu_status
 * vht mode: radiotap_vht
 
-Actions may take arguments in function style. oxm with set_ prefix will be set_field action.
+Actions may take arguments in function style. oxm with set\_ prefix will be set_field action.
 Some nxm actions accepts only function style. Examples:
 
 .. code:: ini
