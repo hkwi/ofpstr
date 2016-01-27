@@ -151,7 +151,7 @@ group_mod example:
 
    import ofpstr.ofp4
    # create request
-   msg = ofpstr.ofp4.str2group([dict(actions="output=1"), dict(actions="output=2")])
+   msg = ofpstr.ofp4.str2group([dict(actions="output=1"), dict(actions="output=2")], group_id=1)
 
 group_desc multipart example:
 
