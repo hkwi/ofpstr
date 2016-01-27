@@ -7,6 +7,10 @@ from .nx import nxast, register_nxast, NX_VENDOR_ID
 align8 = lambda x:(x+7)//8*8
 
 OFPT_FLOW_MOD = 14
+OFPT_MULTIPART_REQUEST = 18
+OFPT_MULTIPART_REPLY = 19
+
+OFPMP_FLOW = 1
 
 OFPTT_MAX = 0xfe
 OFPTT_ALL = 0xff
@@ -26,6 +30,16 @@ ofpg = {
 }
 for num,name in ofpg.items():
 	globals()["OFPG_{:s}".format(name.upper())] = num
+
+ofpff = {
+	"send_flow_rem": 1<<0,
+	"check_overlap": 1<<1,
+	"reset_counts": 1<<2,
+	"no_pkt_counts": 1<<3,
+	"no_byt_counts": 1<<4 }
+
+for name,num in ofpff.items():
+	globals()["OFPFF_{:s}".format(name.upper())] = num
 
 OFPFC_ADD = 0
 OFPFC_MODIFY = 1
@@ -343,7 +357,7 @@ def str2dict(s, defaults={}):
 				ret["inst"] += struct.pack("!HH4x", OFPIT_CLEAR_ACTIONS, 8)
 			elif name == "@meter":
 				op,payload,s = get_token(s)
-				assert op.find("=")>=0, "metadata requires arg"
+				assert op.find("=")>=0, "meter requires arg"
 				assert payload.find("/") < 0, "meter does not take mask"
 				num,l = parseInt(payload)
 				assert l == len(payload)
@@ -358,9 +372,10 @@ def str2dict(s, defaults={}):
 				assert len(payload) == l
 				ret[field] = num
 				return unparsed
-
 			if name in ("table", "priority", "idle_timeout", "hard_timeout", "buffer"):
 				s = proc(name)
+			elif name in ofpff:
+				ret["flags"] = ret.get("flags", 0) | ofpff[name]
 			elif name == "cookie":
 				op,payload,s = get_token(s)
 				assert op.find("=")>=0, "cookie take value"
@@ -412,6 +427,48 @@ def str2dict(s, defaults={}):
 
 	return ret
 
+def _fixed(default, cookie=0, cookie_mask=0,
+		table=0, priority=0, buffer=0, out_port=0, out_group=0,
+		idle_timeout=0, hard_timeout=0,
+		flags=0):
+	ret = []
+	if cookie_mask != 0:
+		ret.append("cookie={:#x}/{:#x}".format(cookie, cookie_mask))
+	elif cookie != 0:
+		ret.append("cookie={:#x}".format(cookie))
+
+	if table != default.get("table", 0):
+		ret.append("table={:d}".format(table))
+
+	if priority != 0:
+		ret.append("priority={:d}".format(priority))
+
+	if buffer != default.get("buffer", 0):
+		ret.append("buffer={:#x}".format(buffer))
+
+	if out_port != default.get("out_port", 0):
+		if out_port in ofpp:
+			ret.append("out_port={:s}".format(ofpp[out_port]))
+		else:
+			ret.append("out_port={:d}".format(out_port))
+
+	if out_group != default.get("out_group", 0):
+		if out_group in ofpg:
+			ret.append("out_group={:s}".format(ofpg[out_group]))
+		else:
+			ret.append("out_group={:d}".format(out_group))
+
+	if idle_timeout != 0:
+		ret.append("idle_timeout={:d}".format(idle_timeout))
+
+	if hard_timeout != 0:
+		ret.append("hard_timeout={:d}".format(hard_timeout))
+	
+	for name,num in ofpff.items():
+		if flags & num:
+			ret.append(name)
+	
+	return ret
 
 ofpfc_del_default = dict(
 	table= OFPTT_ALL,
@@ -423,9 +480,9 @@ ofpfc_default = dict(
 	buffer = OFP_NO_BUFFER,
 )
 
-def str2mod(s, cmd=OFPFC_ADD, xid=0):
+def str2mod(s, command=OFPFC_ADD, xid=0):
 	default = ofpfc_default
-	if cmd in (OFPFC_DELETE, OFPFC_DELETE_STRICT):
+	if command in (OFPFC_DELETE, OFPFC_DELETE_STRICT):
 		default = ofpfc_del_default
 
 	info = str2dict(s, default)
@@ -442,14 +499,14 @@ def str2mod(s, cmd=OFPFC_ADD, xid=0):
 		info.get("cookie", 0),
 		info.get("cookie_mask", 0),
 		info.get("table", 0),
-		cmd,
+		command,
 		info.get("idle_timeout", 0),
 		info.get("hard_timeout", 0),
 		info.get("priority", 0),
 		info.get("buffer", OFP_NO_BUFFER),
 		info.get("out_port", default.get("out_port", 0)),
 		info.get("out_group", default.get("out_group", 0)),
-		0)+match+inst
+		info.get("flags", 0))+match+inst
 
 def mod2str(msg):
 	(hdr_version, hdr_type, hdr_length, hdr_xid,
@@ -471,38 +528,17 @@ def mod2str(msg):
 	if cmd in (OFPFC_DELETE, OFPFC_DELETE_STRICT):
 		default = ofpfc_del_default
 
-	ret = []
-	if cookie_mask != 0:
-		ret.append("cookie={:#x}/{:#x}".format(cookie, cookie_mask))
-	elif cookie != 0:
-		ret.append("cookie={:#x}".format(cookie))
-
-	if table != default.get("table", 0):
-		ret.append("table={:d}".format(table))
-
-	if priority != 0:
-		ret.append("priority={:d}".format(priority))
-
-	if buffer_id != default.get("buffer", 0):
-		ret.append("buffer={:#x}".format(buffer_id))
-
-	if out_port != default.get("out_port", 0):
-		if out_port in ofpp:
-			ret.append("out_port={:s}".format(ofpp[out_port]))
-		else:
-			ret.append("out_port={:d}".format(out_port))
-
-	if out_group != default.get("out_group", 0):
-		if out_group in ofpg:
-			ret.append("out_group={:s}".format(ofpg[out_group]))
-		else:
-			ret.append("out_group={:d}".format(out_group))
-
-	if idle_timeout != 0:
-		ret.append("idle_timeout={:d}".format(idle_timeout))
-
-	if hard_timeout != 0:
-		ret.append("hard_timeout={:d}".format(hard_timeout))
+	ret = _fixed(default,
+		cookie=cookie,
+		cookie_mask=cookie_mask,
+		table=table,
+		priority=priority,
+		buffer=buffer_id,
+		out_port=out_port,
+		out_group=out_group,
+		idle_timeout=idle_timeout,
+		hard_timeout=hard_timeout,
+		flags=flags)
 
 	if match_type == OFPMT_OXM:
 		rstr = oxm2str(msg[52:52+match_length-4])
@@ -516,3 +552,158 @@ def mod2str(msg):
 		ret.append(istr)
 
 	return ",".join(ret)
+
+def mod2extra(msg):
+	(hdr_version, hdr_type, hdr_length, hdr_xid,
+	cookie,
+	cookie_mask,
+	table,
+	cmd) = struct.unpack_from("!BBHIQQBB", msg)
+	if cmd != OFPFC_ADD:
+		return dict(command=cmd, xid=hdr_xid)
+	return dict(xid=hdr_xid)
+
+def str2flows(rules, mp_type=OFPT_MULTIPART_REQUEST, xid=0):
+	msgs = []
+	capture = b""
+	for rule, extra in rules.items():
+		info = str2dict(rule, extra)
+		
+		oxm = info.get("match", b"")
+		length = 4 + len(oxm)
+		match = struct.pack("!HH", OFPMT_OXM, length) + oxm
+		match += b"\0" * (align8(length)-length)
+
+		inst = info.get("inst", b"")
+
+		body = b""
+		if mp_type==OFPT_MULTIPART_REQUEST:
+			body = struct.pack("!B3xII4xQQ",
+				info.get("table", 0),
+				info.get("out_port", 0),
+				info.get("out_group", 0),
+				info.get("cookie", 0),
+				info.get("cookie_mask", 0)) + match
+		elif mp_type==OFPT_MULTIPART_REPLY:
+			body = struct.pack("!HBxIIHHHH4xQQQ",
+				48 + len(match) + len(inst),
+				info.get("table", 0),
+				info.get("duration_sec", 0),
+				info.get("duration_nsec", 0),
+				info.get("priority", 0),
+				info.get("idle_timeout", 0),
+				info.get("hard_timeout", 0),
+				info.get("flags", 0),
+				info.get("cookie", 0),
+				info.get("packet_count", 0),
+				info.get("byte_count", 0)) + match + inst
+		
+		if len(capture) + len(body) > 0xffff - 16:
+			flag = OFPMPF_REPLY_MORE
+			if mp_type==OFPT_MULTIPART_REQUEST:
+				flag = OFPMPF_REQ_MORE
+			msgs.append(struct.pack("!BBHIHH4x",
+				4, mp_type, 16+len(capture), xid,
+				OFPMP_FLOW, flag)+capture)
+			capture = body
+		else:
+			capture += body
+	
+	if len(capture)==0 and mp_type==OFPT_MULTIPART_REQUEST:
+		match = struct.pack("!HH4x", OFPMT_OXM, 4)
+		capture = struct.pack("!B3xII4xQQ", 0, 0, 0, 0, 0) + match
+	
+	msgs.append(struct.pack("!BBHIHH4x",
+		4, mp_type, 16+len(capture), xid,
+		OFPMP_FLOW, 0)+capture)
+	return msgs
+
+def flows2extras(msg):
+	(hdr_version, hdr_type, hdr_length, hdr_xid,
+	mp_type,
+	mp_flags) = struct.unpack_from("!BBHIHH4x", msg)
+	
+	assert mp_type == OFPMP_FLOW, "OFPMP_FLOW required"
+	
+	ret = dict(xid=hdr_xid)
+	if hdr_type != OFPT_MULTIPART_REPLY:
+		ret["mp_type"] = hdr_type
+	
+	if mp_flags != 0:
+		ret["mp_flags"] = mp_flags
+	
+	return ret
+
+def flows2str(msg):
+	(hdr_version, hdr_type, hdr_length, hdr_xid,
+	mp_type,
+	mp_flags) = struct.unpack_from("!BBHIHH4x", msg)
+	
+	assert mp_type == OFPMP_FLOW, "OFPMP_FLOW required"
+	
+	rules = {}
+	body = msg[16:]
+	if hdr_type == OFPT_MULTIPART_REQUEST:
+		(table_id,
+		out_port,
+		out_group,
+		cookie,
+		cookie_mask,
+		match_type,
+		match_length) = struct.unpack_from("!B3xII4xQQHH", body)
+		ret = _fixed({},
+			table=table_id,
+			out_port=out_port,
+			out_group=out_group,
+			cookie=cookie,
+			cookie_mask=cookie_mask)
+		if match_type == OFPMT_OXM:
+			rstr = oxm2str(body[36:36+match_length-4])
+			if len(rstr):
+				ret.append(rstr)
+		else:
+			raise ValueError("match_type {:d} not supported".format(match_type))
+		rules[",".join(ret)] = {}
+	elif hdr_type == OFPT_MULTIPART_REPLY:
+		while len(body) > 56:
+			(length,
+			table_id,
+			duration_sec,
+			duration_nsec,
+			priority,
+			idle_timeout,
+			hard_timeout,
+			flags,
+			cookie,
+			packet_count,
+			byte_count,
+			match_type,
+			match_length) = struct.unpack_from("!HBxIIHHHH4xQQQHH", body)
+
+			ret = _fixed({},
+				cookie=cookie,
+				table=table_id,
+				priority=priority,
+				idle_timeout=idle_timeout,
+				hard_timeout=hard_timeout,
+				flags=flags)
+
+			if match_type == OFPMT_OXM:
+				rstr = oxm2str(body[52:52+match_length-4])
+				if len(rstr):
+					ret.append(rstr)
+			else:
+				raise ValueError("match_type {:d} not supported".format(match_type))
+
+			istr = inst2str(body[48+align8(match_length):length])
+			if len(istr):
+				ret.append(istr)
+
+			rules[",".join(ret)] = dict(
+				duration_sec=duration_sec,
+				duration_nsec=duration_nsec,
+				packet_count=packet_count,
+				byte_count=byte_count)
+			body = body[length:]
+	return rules
+

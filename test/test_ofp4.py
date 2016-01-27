@@ -78,5 +78,33 @@ class TestRoundTrip(unittest.TestCase):
 			ret = ofpstr.ofp4.mod2str(ofpstr.ofp4.str2mod(aliased))
 			assert ret == flow, ret
 
+class TestFlowStat(unittest.TestCase):
+	def test_empty_req(self):
+		flows = {"": {}}
+		msgs = ofpstr.ofp4.str2flows(flows)
+		assert len(msgs) == 1
+		rules = ofpstr.ofp4.flows2str(msgs[0])
+		for rule, extra in rules.items():
+			assert not rule
+			assert not extra
+
+	def test_empty_res(self):
+		OFPT_MULTIPART_REPLY = 19
+		flows = {"": {}}
+		msgs = ofpstr.ofp4.str2flows(flows, mp_type=OFPT_MULTIPART_REPLY)
+		assert len(msgs) == 1
+		rules = ofpstr.ofp4.flows2str(msgs[0])
+		assert not rules
+
+	def test_single_res(self):
+		OFPT_MULTIPART_REPLY = 19
+		flows = {"send_flow_rem,in_port=1": {"byte_count":20}}
+		msgs = ofpstr.ofp4.str2flows(flows, mp_type=OFPT_MULTIPART_REPLY)
+		assert len(msgs) == 1
+		rules = ofpstr.ofp4.flows2str(msgs[0])
+		for rule, extra in rules.items():
+			assert rule == "send_flow_rem,in_port=1"
+			assert extra.pop("byte_count") == 20
+
 if __name__ == "__main__":
 	unittest.main()
