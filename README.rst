@@ -33,7 +33,6 @@ There are two modes of `oxm` and `ofp_mod_flow`.
    print(ofpstr.ofp4.mod2str(ofp_flow_mod_msg))
    # in_port=1,@apply,output=controller
 
-
 general syntax
 --------------
 Tokens are separated by comma, field may take argument with `=` separator.
@@ -128,6 +127,45 @@ Some nxm actions accepts only function style. Examples:
 * integer mode: output, set_mpls_ttl, push_vlan, pop_mpls, push_mpls, 
   set_queue, group, set_nw_ttl, push_pbb, 
 * flag mode: copy_ttl_out, copy_ttl_in, dec_mpls_ttl, dec_nw_ttl, pop_pbb
+
+Advanced features
+-----------------
+`flow` and `actions` will be in string representation, and the other part will be 
+stored in dictionary.
+
+flow_stats multipart example:
+
+.. code:: python
+
+   import ofpstr.ofp4
+   # create dummy reply
+   msg, = ofpstr.ofp4.str2flows([dict(flow="in_port=1"), dict(flow="in_port=2")])
+   # parse that reply
+   print(ofpstr.ofp4.flows2str(msg))
+   # [{'byte_count': 0, 'packet_count': 0, 'duration_sec': 0, 'flow': 'in_port=1', 'duration_nsec': 0},
+   #  {'byte_count': 0, 'packet_count': 0, 'duration_sec': 0, 'flow': 'in_port=2', 'duration_nsec': 0}]
+
+group_mod example:
+
+.. code:: python
+
+   import ofpstr.ofp4
+   # create request
+   msg = ofpstr.ofp4.str2group([dict(actions="output=1"), dict(actions="output=2")])
+
+group_desc multipart example:
+
+.. code:: python
+
+   import ofpstr.ofp4
+   # create dummy reply
+   msg, = ofpstr.ofp4.str2groups_desc([
+     dict(group_id=1, buckets=[dict(actions="output=1"), dict(actions="output=2")]),
+     dict(group_id=2, buckets=[dict(actions="output=1"), dict(actions="output=2")])])
+   # parse that reply
+   ofpstr.ofp4.groups_desc2str(msg)
+   # [{'buckets': [{'actions': 'output=1'}, {'actions': 'output=2'}], 'group_id': 1},
+   #  {'buckets': [{'actions': 'output=1'}, {'actions': 'output=2'}], 'group_id': 2}]
 
 LICENSE
 -------
