@@ -48,10 +48,6 @@ class TestRoundTrip(unittest.TestCase):
 		"table=2",
 		"priority=10",
 		"buffer=0x3",
-		"out_port=1",
-		"out_port=controller",
-		"out_group=any",
-		"out_group=1",
 		"idle_timeout=10",
 		"hard_timeout=4",
 		"@metadata=0x1,@meter=3,@apply,@clear,@write,@goto=5",
@@ -60,6 +56,11 @@ class TestRoundTrip(unittest.TestCase):
 		"priority=20,idle_timeout=30,dot11=1,dot11_frame_ctrl=00/0f,dot11_addr2=01:23:45:67:89:01,@apply,output=controller",
 		"cookie=0x1/0xf,priority=4,buffer=0x1,idle_timeout=300,hard_timeout=300,vlan_vid=0x1,@apply,set_vlan_vid=0x2,output=3,@goto=3",
 		)
+	del_flows = (
+		"out_port=1",
+		"out_port=controller",
+		"out_group=1",
+	)
 	aliased_flows = [
 		("@apply,set_nxm_tun_ipv4_src(192.168.0.1),set_nxm_tun_ipv4_dst(192.168.0.2)",
 			"@apply,set_nxm_tun_ipv4_src=192.168.0.1,set_nxm_tun_ipv4_dst=192.168.0.2"),
@@ -73,7 +74,11 @@ class TestRoundTrip(unittest.TestCase):
 	def test_mod(self):
 		for flow in self.flows:
 			ret = ofpstr.ofp4.mod2str(ofpstr.ofp4.str2mod(flow))
-			assert ret == flow, ret
+			assert ret == flow, "{:s}!={:s}".format(ret, flow)
+		for flow in self.del_flows:
+			OFPFC_DELETE = 3
+			ret = ofpstr.ofp4.mod2str(ofpstr.ofp4.str2mod(flow, command=OFPFC_DELETE))
+			assert ret == flow, "{:s}!={:s}".format(ret, flow)
 		for aliased, flow in self.aliased_flows:
 			ret = ofpstr.ofp4.mod2str(ofpstr.ofp4.str2mod(aliased))
 			assert ret == flow, ret
@@ -87,7 +92,7 @@ class TestFlowStat(unittest.TestCase):
 		rules = ofpstr.ofp4.flows2str(msgs[0])
 		assert rules
 		for rule in rules:
-			assert not rule["flow"]
+			assert not rule["flow"], rule["flow"]
 
 	def test_empty_res(self):
 		flows = []

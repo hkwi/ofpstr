@@ -123,7 +123,7 @@ def action_output_act2str(payload):
 	name = ofpp.get(port, "{:d}".format(port))
 	if maxLen == OFPCML_NO_BUFFER:
 		return "output={:s}".format(name)
-	else:
+	elif port == OFPP_CONTROLLER:
 		return "output={:s}:{:#x}".format(name, maxLen)
 
 def action_push_str2act(ofpat):
@@ -430,16 +430,18 @@ def str2dict(s, defaults={}):
 	return ret
 
 def _fixed(default, cookie=0, cookie_mask=0,
-		table=0, priority=0, buffer=0, out_port=0, out_group=0,
+		priority=0, buffer=0,
 		idle_timeout=0, hard_timeout=0,
-		flags=0):
+		flags=0, **kwargs):
 	ret = []
 	if cookie_mask != 0:
 		ret.append("cookie={:#x}/{:#x}".format(cookie, cookie_mask))
 	elif cookie != 0:
 		ret.append("cookie={:#x}".format(cookie))
 
-	if table != default.get("table", 0):
+	k = "table"
+	if k in kwargs and k in default and kwargs[k] != default[k]:
+		table = kwargs[k]
 		ret.append("table={:d}".format(table))
 
 	if priority != 0:
@@ -448,13 +450,17 @@ def _fixed(default, cookie=0, cookie_mask=0,
 	if buffer != default.get("buffer", 0):
 		ret.append("buffer={:#x}".format(buffer))
 
-	if out_port != default.get("out_port", 0):
+	k = "out_port"
+	if k in kwargs and k in default and kwargs[k] != default[k]:
+		out_port = kwargs[k]
 		if out_port in ofpp:
 			ret.append("out_port={:s}".format(ofpp[out_port]))
 		else:
 			ret.append("out_port={:d}".format(out_port))
 
-	if out_group != default.get("out_group", 0):
+	k = "out_group"
+	if k in kwargs and k in default and kwargs[k] != default[k]:
+		out_group = kwargs[k]
 		if out_group in ofpg:
 			ret.append("out_group={:s}".format(ofpg[out_group]))
 		else:
@@ -517,12 +523,13 @@ def str2buckets(buckets, group_type=OFPGT_ALL):
 	return ret
 
 ofpfc_del_default = dict(
-	table= OFPTT_ALL,
-	out_port= OFPP_ANY,
-	out_group= OFPG_ANY,
+	table = OFPTT_ALL,
+	out_port = OFPP_ANY,
+	out_group = OFPG_ANY,
 )
 
 ofpfc_default = dict(
+	table = 0,
 	buffer = OFP_NO_BUFFER,
 )
 
@@ -549,7 +556,7 @@ def str2mod(s, command=OFPFC_ADD, xid=0):
 		info.get("idle_timeout", 0),
 		info.get("hard_timeout", 0),
 		info.get("priority", 0),
-		info.get("buffer", OFP_NO_BUFFER),
+		info.get("buffer", default.get("buffer", 0)),
 		info.get("out_port", default.get("out_port", 0)),
 		info.get("out_group", default.get("out_group", 0)),
 		info.get("flags", 0))+match+inst
@@ -610,11 +617,14 @@ def mod2extra(msg):
 	return dict(xid=hdr_xid)
 
 def str2flows(rules, type=OFPT_MULTIPART_REPLY, xid=0):
+	if type!=OFPT_MULTIPART_REPLY and not rules:
+		rules = [{}]
+	
 	msgs = []
 	capture = b""
 	for rule in rules:
 		r = dict(rule)
-		info = str2dict(r.pop("flow"), r)
+		info = str2dict(r.pop("flow", ""), r)
 		
 		oxm = info.get("match", b"")
 		length = 4 + len(oxm)
@@ -626,9 +636,9 @@ def str2flows(rules, type=OFPT_MULTIPART_REPLY, xid=0):
 		body = b""
 		if type!=OFPT_MULTIPART_REPLY:
 			body = struct.pack("!B3xII4xQQ",
-				info.get("table", 0),
-				info.get("out_port", 0),
-				info.get("out_group", 0),
+				info.get("table", OFPTT_ALL),
+				info.get("out_port", OFPP_ANY),
+				info.get("out_group", OFPG_ANY),
 				info.get("cookie", 0),
 				info.get("cookie_mask", 0)) + match
 		else:
@@ -656,10 +666,6 @@ def str2flows(rules, type=OFPT_MULTIPART_REPLY, xid=0):
 		else:
 			capture += body
 	
-	if len(capture)==0 and type==OFPT_MULTIPART_REQUEST:
-		match = struct.pack("!HH4x", OFPMT_OXM, 4)
-		capture = struct.pack("!B3xII4xQQ", 0, 0, 0, 0, 0) + match
-	
 	msgs.append(struct.pack("!BBHIHH4x",
 		4, type, 16+len(capture), xid,
 		OFPMP_FLOW, 0)+capture)
@@ -682,7 +688,7 @@ def flows2str(msg):
 		cookie_mask,
 		match_type,
 		match_length) = struct.unpack_from("!B3xII4xQQHH", body)
-		ret = _fixed({},
+		ret = _fixed({"table":OFPTT_ALL, "out_port":OFPP_ANY, "out_group":OFPG_ANY},
 			table=table_id,
 			out_port=out_port,
 			out_group=out_group,
@@ -711,7 +717,7 @@ def flows2str(msg):
 			match_type,
 			match_length) = struct.unpack_from("!HBxIIHHHH4xQQQHH", body)
 
-			ret = _fixed({},
+			ret = _fixed({"table": 0},
 				cookie=cookie,
 				table=table_id,
 				priority=priority,
