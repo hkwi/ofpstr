@@ -121,10 +121,10 @@ def action_output_str2act(unparsed, readarg):
 def action_output_act2str(payload):
 	(port,maxLen) = struct.unpack("!IH6x", payload)
 	name = ofpp.get(port, "{:d}".format(port))
-	if maxLen == OFPCML_NO_BUFFER:
-		return "output={:s}".format(name)
-	elif port == OFPP_CONTROLLER:
+	if port == OFPP_CONTROLLER and maxLen != OFPCML_NO_BUFFER:
 		return "output={:s}:{:#x}".format(name, maxLen)
+	else:
+		return "output={:s}".format(name)
 
 def action_push_str2act(ofpat):
 	def str2act(unparsed, readarg):
