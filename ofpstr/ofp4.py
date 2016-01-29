@@ -304,16 +304,11 @@ PHASE_MATCH = 0
 PHASE_ACTION = 1
 PHASE_NOARG = 2
 
-def str2dict(s, defaults={}):
-	'''
-	@param defaults returned dict will always have the defaults.keys()
-	'''
-	ret = {}
-	ret.update(defaults)
-	ret.update(dict(
+def str2dict(s):
+	ret = dict(
 		match= b"",
 		inst= b"",
-	))
+	)
 
 	actions = b""
 	def inst_action(atype):
@@ -526,27 +521,29 @@ def str2buckets(buckets, group_type=OFPGT_ALL):
 	return ret
 
 ofpfc_del_default = dict(
-	table = OFPTT_ALL,
 	cookie = 0,
 	cookie_mask = 0,
-	priority = 0,
-	out_port = OFPP_ANY,
-	out_group = OFPG_ANY,
+	table = OFPTT_ALL,
 	idle_timeout = 0,
 	hard_timeout = 0,
+	priority = 0x8000,
 	buffer = 0,
+	out_port = OFPP_ANY,
+	out_group = OFPG_ANY,
+	flags = 0,
 )
 
 ofpfc_default = dict(
-	table = 0,
 	cookie = 0,
 	cookie_mask = 0,
-	priority = 0,
-	out_port = 0,
-	out_group = 0,
+	table = 0,
 	idle_timeout = 0,
 	hard_timeout = 0,
+	priority = 0x8000,
 	buffer = OFP_NO_BUFFER,
+	out_port = 0,
+	out_group = 0,
+	flags = 0,
 )
 
 def str2mod(s, command=OFPFC_ADD, xid=0):
@@ -554,7 +551,8 @@ def str2mod(s, command=OFPFC_ADD, xid=0):
 	if command in (OFPFC_DELETE, OFPFC_DELETE_STRICT):
 		default = ofpfc_del_default
 
-	info = str2dict(s, default)
+	info = dict(default)
+	info.update(str2dict(s))
 
 	OFPMT_OXM = 1
 	oxm = info.get("match", b"")
@@ -565,17 +563,17 @@ def str2mod(s, command=OFPFC_ADD, xid=0):
 	inst = info.get("inst", b"")
 
 	return struct.pack("!BBHIQQBBHHHIIIH2x", 4, OFPT_FLOW_MOD, 48+align8(length)+len(inst), xid,
-		info.get("cookie", 0),
-		info.get("cookie_mask", 0),
-		info.get("table", 0),
+		info["cookie"],
+		info["cookie_mask"],
+		info["table"],
 		command,
-		info.get("idle_timeout", 0),
-		info.get("hard_timeout", 0),
-		info.get("priority", 0),
-		info.get("buffer", 0),
-		info.get("out_port", 0),
-		info.get("out_group", 0),
-		info.get("flags", 0))+match+inst
+		info["idle_timeout"],
+		info["hard_timeout"],
+		info["priority"],
+		info["buffer"],
+		info["out_port"],
+		info["out_group"],
+		info["flags"])+match+inst
 
 def mod2str(msg):
 	(hdr_version, hdr_type, hdr_length, hdr_xid,
@@ -639,7 +637,8 @@ def str2flows(rules, type=OFPT_MULTIPART_REPLY, xid=0):
 	msgs = []
 	capture = b""
 	for rule in rules:
-		info = str2dict(rule.get("flow", ""), rule)
+		info = dict(rule)
+		info.update(str2dict(info.pop("flow", "")))
 		
 		oxm = info["match"]
 		length = 4 + len(oxm)
