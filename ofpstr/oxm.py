@@ -11,6 +11,11 @@ except:
 	L0 = 0
 	long = int
 
+try:
+	strtypes = (str, unicode)
+except:
+	strtypes = (str,)
+
 OFPXMC_NXM_0 = 0x0000
 OFPXMC_NXM_1 = 0x0001
 OFPXMC_OPENFLOW_BASIC = 0x8000
@@ -246,7 +251,7 @@ def uint_str2bin(field, size):
 		rlen = 0
 		has_mask = False
 		payload = b""
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			num,rlen = parseInt(unparsed)
 			payload += int2bytes([(num>>(8*s))&0xff for s in reversed(range(size))])
 			
@@ -287,7 +292,7 @@ def port_str2bin(field, fmt="!I"):
 	def str2bin(unparsed):
 		rlen = 0
 		payload = b""
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			for (v,name) in ofpp.items():
 				for nm in (name.lower(), name.upper()):
 					if unparsed.startswith(nm):
@@ -335,7 +340,7 @@ def mac_str2bin(field):
 		rlen = 0
 		payload = b""
 		has_mask = False
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			value, rlen = scan(unparsed)
 			if unparsed[rlen:].startswith("/"):
 				mask, l = scan(unparsed[rlen+1:])
@@ -373,7 +378,7 @@ def ipv4_str2bin(field):
 		rlen = 0
 		payload = b""
 		has_mask = False
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			h, txt, unparsed = get_token(unparsed)
 			vm = txt.split("/", 1)
 			payload = socket.inet_aton(vm[0])
@@ -416,7 +421,7 @@ def ipv6_str2bin(field):
 		rlen = 0
 		payload = b""
 		has_mask = False
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			h,txt,unparsed = get_token(unparsed)
 			rlen = len(h)+len(txt)
 			vm = txt.split("/", 1)
@@ -451,7 +456,7 @@ def pkt_bin2str(payload, has_mask):
 def pkt_str2bin(unparsed):
 	rlen = 0
 	payload = b""
-	if isinstance(unparsed, str):
+	if isinstance(unparsed, strtypes):
 		ns, l = parseInt(unparsed)
 		assert unparsed[l] == ":"
 		ns_type, l2 = parseInt(unparsed[l+1:])
@@ -485,7 +490,7 @@ def hex_str2bin(field):
 		payload = b""
 		has_mask = False
 		length = 0xff
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			h, txt, unparsed = get_token(unparsed)
 			rlen = len(h)+len(txt)
 			vm = txt.split("/", 1)
@@ -531,7 +536,7 @@ def ssid_str2bin(unparsed):
 	payload = b""
 	has_mask = False
 	length = 0xff
-	if isinstance(unparsed, str):
+	if isinstance(unparsed, strtypes):
 		h, txt, unparsed = get_token(unparsed)
 		rlen = len(h) + len(txt)
 		vm = txt.split("/")
@@ -584,7 +589,7 @@ def le_str2bin(field, size):
 		rlen = 0
 		payload = b""
 		has_mask = False
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			num,rlen = parseInt(unparsed)
 			payload += int2bytes([0xFF & (num>>(8*s)) for s in range(size)])
 			
@@ -618,7 +623,7 @@ def rate_str2bin(unparsed):
 	rlen = 0
 	payload = b""
 	has_mask = False
-	if isinstance(unparsed, str):
+	if isinstance(unparsed, strtypes):
 		num, rlen = parseFloat(unparsed)
 		if unparsed[rlen] == "K":
 			rate = num / 500
@@ -657,7 +662,7 @@ def ch_str2bin(unparsed):
 	payload = b""
 	has_mask = False
 	
-	if isinstance(unparsed, str):
+	if isinstance(unparsed, strtypes):
 		v1,l = parseInt(unparsed)
 		assert unparsed[l] == ":"
 		v2,l2 = parseInt(unparsed[l+1:])
@@ -726,7 +731,7 @@ def comp_str2bin(field, packs):
 		payload = b""
 		has_mask = False
 		
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			h,txt,unparsed = get_token(unparsed)
 			rlen = len(h) + len(txt)
 			vm = txt.split("/", 1)
@@ -793,7 +798,7 @@ def vht_str2bin(unparsed):
 	rlen = 0
 	payload = b""
 	has_mask = False
-	if isinstance(unparsed, str):
+	if isinstance(unparsed, strtypes):
 		h,txt,unparsed = get_token(unparsed)
 		rlen = len(h) + len(txt)
 		vm = txt.split("/", 1)
@@ -822,7 +827,7 @@ def s8_str2bin(field):
 	def str2bin(unparsed):
 		rlen = 0
 		payload = b""
-		if isinstance(unparsed, str):
+		if isinstance(unparsed, strtypes):
 			num,rlen = parseInt(unparsed)
 			payload = struct.pack("<b", num)
 		
