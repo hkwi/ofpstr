@@ -504,18 +504,14 @@ def buckets2str(msg, group_type=OFPGT_ALL):
 	return buckets
 
 def str2buckets(buckets, group_type=OFPGT_ALL):
-	default = {}
-	if group_type == OFPGT_FF:
-		default = dict(watch_port=OFPP_ANY, watch_group=OFPG_ANY)
-	
 	ret = b""
 	for b in buckets:
 		acts,_ = str2act(b.get("actions", ""))
 		ret += struct.pack("!HHII4x",
 			align8(16+len(acts)),
 			b.get("weight", 0),
-			b.get("watch_port", default.get("watch_port", 0)),
-			b.get("watch_group", default.get("watch_group", 0)))
+			b.get("watch_port", OFPP_ANY),
+			b.get("watch_group", OFPG_ANY))
 		ret += acts
 		ret += b"\0"*(align8(len(acts))-len(acts))
 	return ret
