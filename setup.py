@@ -4,7 +4,7 @@ except:
 	from distutils.core import setup
 
 setup(name='ofpstr',
-	version='0.1.8',
+	version='0.1.9',
 	description='Openflow stringer library',
 	long_description=open("README.rst").read(),
 	author='Hiroaki Kawai',

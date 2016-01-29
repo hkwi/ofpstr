@@ -107,7 +107,7 @@ class TestFlowStat(unittest.TestCase):
 		assert len(msgs) == 1
 		rules = ofpstr.ofp4.flows2str(msgs[0])
 		for r in rules:
-			assert r["flow"] == "send_flow_rem,in_port=1"
+			assert r["flow"] == "send_flow_rem,in_port=1", r["flow"]
 			assert r["byte_count"] == 20
 
 class TestGroup(unittest.TestCase):
