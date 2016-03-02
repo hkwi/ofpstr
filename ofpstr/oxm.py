@@ -133,11 +133,82 @@ nxm1_names = '''reg0
 	recirc_id
 	conj_id
 	tun_gbp_id
-	tun_gbp_flags'''.split()
+	tun_gbp_flags
+	tun_metadata0
+	tun_metadata1
+	tun_metadata2
+	tun_metadata3
+	tun_metadata4
+	tun_metadata5
+	tun_metadata6
+	tun_metadata7
+	tun_metadata8
+	tun_metadata9
+	tun_metadata10
+	tun_metadata11
+	tun_metadata12
+	tun_metadata13
+	tun_metadata14
+	tun_metadata15
+	tun_metadata16
+	tun_metadata17
+	tun_metadata18
+	tun_metadata19
+	tun_metadata20
+	tun_metadata21
+	tun_metadata22
+	tun_metadata23
+	tun_metadata24
+	tun_metadata25
+	tun_metadata26
+	tun_metadata27
+	tun_metadata28
+	tun_metadata29
+	tun_metadata30
+	tun_metadata31
+	tun_metadata32
+	tun_metadata33
+	tun_metadata34
+	tun_metadata35
+	tun_metadata36
+	tun_metadata37
+	tun_metadata38
+	tun_metadata39
+	tun_metadata40
+	tun_metadata41
+	tun_metadata42
+	tun_metadata43
+	tun_metadata44
+	tun_metadata45
+	tun_metadata46
+	tun_metadata47
+	tun_metadata48
+	tun_metadata49
+	tun_metadata50
+	tun_metadata51
+	tun_metadata52
+	tun_metadata53
+	tun_metadata54
+	tun_metadata55
+	tun_metadata56
+	tun_metadata57
+	tun_metadata58
+	tun_metadata59
+	tun_metadata60
+	tun_metadata61
+	tun_metadata62
+	tun_metadata63
+	tun_flags
+	ct_state
+	ct_zone
+	ct_mark
+	ct_label
+	tun_ipv6_src
+	tun_ipv6_dst'''.split()
 for (i, n) in enumerate(nxm1_names):
 	if n != "_":
 		globals()["NXM_NX_{:s}".format(n.upper())] = nxm_nx(i)
-assert NXM_NX_TUN_GBP_FLAGS==39
+assert NXM_NX_TUN_IPV6_DST==110
 
 STRATOS_EXPERIMENTER_ID = 0xFF00E04D
 
@@ -1022,29 +1093,11 @@ _str2bin["nxm_arp_spa"] = ipv4_str2bin(NXM_OF_ARP_SPA)
 _bin2str[NXM_OF_ARP_TPA] = ipv4_bin2str("nxm_arp_tpa")
 _str2bin["nxm_arp_tpa"] = ipv4_str2bin(NXM_OF_ARP_TPA)
 
-_bin2str[NXM_NX_REG0] = uint_bin2str("nxm_reg0={:#x}/{:#x}")
-_str2bin["nxm_reg0"] = uint_str2bin(NXM_NX_REG0, 4)
-
-_bin2str[NXM_NX_REG1] = uint_bin2str("nxm_reg1={:#x}/{:#x}")
-_str2bin["nxm_reg1"] = uint_str2bin(NXM_NX_REG1, 4)
-
-_bin2str[NXM_NX_REG2] = uint_bin2str("nxm_reg2={:#x}/{:#x}")
-_str2bin["nxm_reg2"] = uint_str2bin(NXM_NX_REG2, 4)
-
-_bin2str[NXM_NX_REG3] = uint_bin2str("nxm_reg3={:#x}/{:#x}")
-_str2bin["nxm_reg3"] = uint_str2bin(NXM_NX_REG3, 4)
-
-_bin2str[NXM_NX_REG4] = uint_bin2str("nxm_reg4={:#x}/{:#x}")
-_str2bin["nxm_reg4"] = uint_str2bin(NXM_NX_REG4, 4)
-
-_bin2str[NXM_NX_REG5] = uint_bin2str("nxm_reg5={:#x}/{:#x}")
-_str2bin["nxm_reg5"] = uint_str2bin(NXM_NX_REG5, 4)
-
-_bin2str[NXM_NX_REG6] = uint_bin2str("nxm_reg6={:#x}/{:#x}")
-_str2bin["nxm_reg6"] = uint_str2bin(NXM_NX_REG6, 4)
-
-_bin2str[NXM_NX_REG7] = uint_bin2str("nxm_reg7={:#x}/{:#x}")
-_str2bin["nxm_reg7"] = uint_str2bin(NXM_NX_REG7, 4)
+for i in range(8):
+	name = "nxm_reg{:d}".format(i)
+	num = locals()["NXM_NX_REG{:d}".format(i)]
+	_bin2str[num] = uint_bin2str(name)
+	_str2bin[name] = uint_str2bin(num, 4)
 
 _bin2str[NXM_NX_TUN_ID] = uint_bin2str("nxm_tun_id={:#x}/{:#x}")
 _str2bin["nxm_tun_id"] = uint_str2bin(NXM_NX_TUN_ID, 8)
@@ -1114,6 +1167,30 @@ _str2bin["nxm_tun_gbp_id"] = uint_str2bin(NXM_NX_TUN_GBP_ID, 2)
 
 _bin2str[NXM_NX_TUN_GBP_FLAGS] = uint_bin2str("nxm_tun_gbp_flags={:#x}/{:#x}")
 _str2bin["nxm_tun_gbp_flags"] = uint_str2bin(NXM_NX_TUN_GBP_FLAGS, 1)
+
+for i in range(64):
+	name = "nxm_tun_metadata{:d}".format(i)
+	num = locals()["NXM_NX_TUN_METADATA{:d}".format(i)]
+	_bin2str[num] = hex_bin2str(name)
+	_str2bin[name] = hex_str2bin(num)
+
+_bin2str[NXM_NX_TUN_FLAGS] = uint_bin2str("nxm_tun_flags={:#x}/{:#x}")
+_str2bin["nxm_tun_flags"] = uint_str2bin(NXM_NX_TUN_FLAGS, 2)
+
+_bin2str[NXM_NX_CT_STATE] = uint_bin2str("nxm_ct_state={:#x}/{:#x}")
+_str2bin["nxm_ct_state"] = uint_str2bin(NXM_NX_CT_STATE, 4)
+
+_bin2str[NXM_NX_CT_ZONE] = uint_bin2str("nxm_ct_zone={:#x}")
+_str2bin["nxm_ct_zone"] = uint_str2bin(NXM_NX_CT_ZONE, 2)
+
+_bin2str[NXM_NX_CT_LABEL] = uint_bin2str("nxm_ct_label={:#x}/{:#x}")
+_str2bin["nxm_ct_label"] = uint_str2bin(NXM_NX_CT_LABEL, 4)
+
+_bin2str[NXM_NX_TUN_IPV6_SRC] = ipv6_bin2str("nxm_tun_ipv6_src")
+_str2bin["nxm_tun_ipv6_src"] = ipv6_str2bin(NXM_NX_TUN_IPV6_SRC)
+
+_bin2str[NXM_NX_TUN_IPV6_DST] = ipv6_bin2str("nxm_tun_ipv6_dst")
+_str2bin["nxm_tun_ipv6_dst"] = ipv6_str2bin(NXM_NX_TUN_IPV6_DST)
 
 _bin2str[STROXM_BASIC_DOT11] = uint_bin2str("dot11={:d}")
 _str2bin["dot11"] = uint_str2bin(STROXM_BASIC_DOT11, 1)
