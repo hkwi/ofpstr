@@ -21,10 +21,12 @@ def msgs(sock):
 		else:
 			yield h
 
+ofpfc = ("add-flow", "mod-flow", "mod-flow-strict", "del-flow", "del-flow-strict")
+
 def ofctl():
 	argp = argparse.ArgumentParser(description="ofpstr ofctl cli")
 	argp.add_argument("switch", help="tcp:127.0.0.1:6633 or unix:/var/run/openvswitch/br0.mgmt")
-	argp.add_argument("command", help="dump-flows, add-flow")
+	argp.add_argument("command", help="dump-flows, "+", ".join(ofpfc))
 	argp.add_argument("args", nargs="*", help="dump-flows takes nothing, add-flow takes a flow rule")
 
 	opts = argp.parse_args()
@@ -54,8 +56,10 @@ def ofctl():
 			
 			if mphdr[5]==0:
 				break
-	elif opts.command == "add-flow":
-		x = ofp4.str2mod(" ".join(opts.args), xid=2)
+	elif opts.command in ofpfc:
+		x = ofp4.str2mod(" ".join(opts.args),
+			command = ofpfc.index(opts.command),
+			xid=2)
 		s.send(x)
 		s.send(struct.pack("!BBHI", 4, 20, 8, 3))
 		for msg in msgs(s):
