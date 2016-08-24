@@ -83,62 +83,6 @@ class TestRoundTrip(unittest.TestCase):
 			ret = ofpstr.ofp4.mod2str(ofpstr.ofp4.str2mod(aliased))
 			assert ret == flow, ret
 
-class TestFlowStat(unittest.TestCase):
-	def test_empty_req(self):
-		OFPT_MULTIPART_REQUEST = 18
-		flows = [{"flow":""}]
-		msgs = ofpstr.ofp4.str2flows(flows, type=OFPT_MULTIPART_REQUEST)
-		assert len(msgs) == 1
-		rules = ofpstr.ofp4.flows2str(msgs[0])
-		assert rules
-		for rule in rules:
-			assert not rule["flow"], rule["flow"]
-
-	def test_empty_res(self):
-		flows = []
-		msgs = ofpstr.ofp4.str2flows(flows)
-		assert len(msgs) == 1
-		rules = ofpstr.ofp4.flows2str(msgs[0])
-		assert not rules
-
-	def test_single_res(self):
-		flows = [{"flow":"send_flow_rem,in_port=1", "byte_count":20}]
-		msgs = ofpstr.ofp4.str2flows(flows)
-		assert len(msgs) == 1
-		rules = ofpstr.ofp4.flows2str(msgs[0])
-		for r in rules:
-			assert r["flow"] == "send_flow_rem,in_port=1", r["flow"]
-			assert r["byte_count"] == 20
-
-class TestGroup(unittest.TestCase):
-	def test_empty(self):
-		assert not ofpstr.ofp4.group2str(ofpstr.ofp4.str2group([]))
-
-	def test_two(self):
-		msg = ofpstr.ofp4.str2group([{"actions":"output=0"}, {"actions":"output=1"}])
-		rules = ofpstr.ofp4.group2str(msg)
-		assert rules[0]["actions"] == "output=0"
-		assert rules[1]["actions"] == "output=1"
-
-class TestGroupsDesc(unittest.TestCase):
-	def test_empty(self):
-		msgs = ofpstr.ofp4.str2groups_desc([])
-		assert len(msgs) == 1
-		assert not ofpstr.ofp4.groups_desc2str(msgs[0])
-
-	def test_two(self):
-		msgs = ofpstr.ofp4.str2groups_desc([
-			dict(group_id=1, buckets=[{"actions":"output=0"}, {"actions":"output=1"}]),
-			dict(group_id=2, buckets=[{"actions":"output=2"}, {"actions":"output=3"}]),
-			])
-		assert len(msgs) == 1
-		rules = ofpstr.ofp4.groups_desc2str(msgs[0])
-		assert len(rules) == 2
-		assert rules[0]["buckets"][0]["actions"] == "output=0"
-		assert rules[0]["buckets"][1]["actions"] == "output=1"
-		assert rules[1]["buckets"][0]["actions"] == "output=2"
-		assert rules[1]["buckets"][1]["actions"] == "output=3"
-
 
 if __name__ == "__main__":
 	unittest.main()

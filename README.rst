@@ -130,42 +130,30 @@ Some nxm actions accepts only function style. Examples:
 
 Advanced features
 -----------------
-`flow` and `actions` will be in string representation, and the other part will be 
-stored in dictionary.
-
-flow_stats multipart example:
+In addition to OFPT_FLOW_MOD, several openflow methods are provided:
 
 .. code:: python
 
    import ofpstr.ofp4
-   # create dummy reply
-   msg, = ofpstr.ofp4.str2flows([dict(flow="in_port=1"), dict(flow="in_port=2")])
-   # parse that reply
-   print(ofpstr.ofp4.flows2str(msg))
-   # [{'byte_count': 0, 'packet_count': 0, 'duration_sec': 0, 'flow': 'in_port=1', 'duration_nsec': 0},
-   #  {'byte_count': 0, 'packet_count': 0, 'duration_sec': 0, 'flow': 'in_port=2', 'duration_nsec': 0}]
+   
+   # OFPMP_FLOW
+   ofpstr.ofp4.text2mpflow
+   ofpstr.ofp4.mpflow2text
+   
+   # OFPT_GROUP
+   ofpstr.ofp4.str2group
+   ofpstr.ofp4.group2str
+   
+   # OFPMP_GROUP / OFPT_MULTIPART_*
+   ofpstr.ofp4.text2mpgroup
+   ofpstr.ofp4.mpgroup2text
+   
+   # OFPMP_GROUP_DESC / OFPT_MULTIPART_*
+   ofpstr.ofp4.text2mpgroupdesc
+   ofpstr.ofp4.mpgroupdesc2text
 
-group_mod example:
+Note these functions were rewritten in 0.2, 
 
-.. code:: python
-
-   import ofpstr.ofp4
-   # create request
-   msg = ofpstr.ofp4.str2group([dict(actions="output=1"), dict(actions="output=2")], group_id=1)
-
-group_desc multipart example:
-
-.. code:: python
-
-   import ofpstr.ofp4
-   # create dummy reply
-   msg, = ofpstr.ofp4.str2groups_desc([
-     dict(group_id=1, buckets=[dict(actions="output=1"), dict(actions="output=2")]),
-     dict(group_id=2, buckets=[dict(actions="output=1"), dict(actions="output=2")])])
-   # parse that reply
-   ofpstr.ofp4.groups_desc2str(msg)
-   # [{'buckets': [{'actions': 'output=1'}, {'actions': 'output=2'}], 'group_id': 1},
-   #  {'buckets': [{'actions': 'output=1'}, {'actions': 'output=2'}], 'group_id': 2}]
 
 LICENSE
 -------

@@ -12,6 +12,7 @@ OFPT_MULTIPART_REQUEST = 18
 OFPT_MULTIPART_REPLY = 19
 
 OFPMP_FLOW = 1
+OFPMP_GROUP = 6
 OFPMP_GROUP_DESC = 7
 
 OFPTT_MAX = 0xfe
@@ -72,6 +73,14 @@ action_names = {
 }
 for n,name in action_names.items():
 	globals()["OFPAT_{:s}".format(name.upper())] = n
+
+ofpgc = ("add", "modify", "delete")
+for num, name in enumerate(ofpgc):
+	globals()["OFPGC_{:s}".format(name.upper())] = num
+
+ofpgt = ("all", "select", "indirect", "ff")
+for num, name in enumerate(ofpgt):
+	globals()["OFPGT_{:s}".format(name.upper())] = num
 
 def action_generic_str2act(ofpat):
 	def str2act(payload, readarg):
@@ -305,6 +314,7 @@ PHASE_ACTION = 1
 PHASE_NOARG = 2
 
 def str2dict(s):
+	'''convert a string into a flow rule information dictionary'''
 	ret = dict(
 		match= b"",
 		inst= b"",
@@ -476,45 +486,66 @@ def _fixed(default, **kwargs):
 	
 	return ret
 
-ofpgc = ("add", "modify", "delete")
-for num, name in enumerate(ofpgc):
-	globals()["OFPGC_{:s}".format(name.upper())] = num
+def bucket2str(msg, group_type=OFPGT_ALL):
+	(length,
+	weight,
+	watch_port,
+	watch_group) = struct.unpack_from("!HHII4x", msg)
+	
+	ret = []
+	if group_type == OFPGT_SELECT and weight != 1:
+		ret.append("weight={:d}".format(weight))
+	if watch_port != OFPP_ANY:
+		ret.append("watch_port={:d}".format(watch_port))
+	if watch_group != OFPG_ANY:
+		ret.append("watch_group={:d}".format(watch_group))
+	
+	a = act2str(msg[16:length])
+	if a:
+		ret.append(a)
+	
+	return ",".join(ret)
 
-ofpgt = ("all", "select", "indirect", "ff")
-for num, name in enumerate(ofpgt):
-	globals()["OFPGT_{:s}".format(name.upper())] = num
+def str2bucket(s, group_type=OFPGT_ALL):
+	info = dict(
+		weight=0,
+		watch_port=OFPP_ANY,
+		watch_group=OFPG_ANY)
+	if group_type == OFPGT_SELECT:
+		info["weight"] = 1
+	
+	actions = b""
+	unparsed = s
+	while len(unparsed):
+		h,name,r = get_token(unparsed)
+		assert h.find("=") < 0
+		if name.startswith("@"):
+			break
+		elif name in ("weight", "watch_port", "watch_group"):
+			op,payload,unparsed = get_token(r)
+			assert op.find("=")>=0
+			num,l = parseInt(payload)
+			assert len(payload) == l
+			info[name] = num
+		else:
+			b,l = str2act(unparsed)
+			if l > 0:
+				actions += b
+				unparsed = unparsed[l:]
+			else:
+				break
+	
+	consumed_length = len(s) - len(unparsed)
+	if consumed_length == 0:
+		return b"", 0
+	return struct.pack("!HHII4x",
+		16 + len(actions),
+		info["weight"],
+		info["watch_port"],
+		info["watch_group"]) + actions, consumed_length
 
-def buckets2str(msg, group_type=OFPGT_ALL):
-	buckets = []
-	while len(msg) >= 16:
-		(length,
-		weight,
-		watch_port,
-		watch_group) = struct.unpack_from("!HHII4x", msg)
-		ret = dict(actions=act2str(msg[16:length]))
-		if group_type == OFPGT_SELECT:
-			ret["weight"] = weight
-		if group_type == OFPGT_FF:
-			if watch_port != OFPP_ANY:
-				ret["watch_port"] = watch_port
-			if watch_group != OFPG_ANY:
-				ret["watch_group"] = watch_group
-		buckets.append(ret)
-		msg = msg[length:]
-	return buckets
 
-def str2buckets(buckets, group_type=OFPGT_ALL):
-	ret = b""
-	for b in buckets:
-		acts,_ = str2act(b.get("actions", ""))
-		ret += struct.pack("!HHII4x",
-			align8(16+len(acts)),
-			b.get("weight", 0),
-			b.get("watch_port", OFPP_ANY),
-			b.get("watch_group", OFPG_ANY))
-		ret += acts
-		ret += b"\0"*(align8(len(acts))-len(acts))
-	return ret
+# OFPT_FLOW_MOD
 
 ofpfc_del_default = dict(
 	cookie = 0,
@@ -626,16 +657,115 @@ def mod2extra(msg):
 		return dict(command=cmd, xid=hdr_xid)
 	return dict(xid=hdr_xid)
 
-def str2flows(rules, type=OFPT_MULTIPART_REPLY, xid=0):
+
+# OFPT_GROUP_MOD
+
+def str2group(s, command=OFPGC_ADD, xid=0):
+	group_id=OFPG_ANY
+	group_type=OFPGT_ALL
+
+	unparsed = s
+	while len(unparsed) > 0:
+		h,name,r = get_token(unparsed)
+		if name == "group":
+			op,payload,r = get_token(r)
+			if payload.lower() == "all":
+				group_id = OFPG_ALL
+			else:
+				num,l = parseInt(payload)
+				assert len(payload) == l
+				group_id = num
+			
+			unparsed = r
+		elif name in ofpgt:
+			group_type = ofpgt.index(name)
+			unparsed = r
+		else:
+			break
+
+	buckets = b""
+	info = {}
+	while len(unparsed) > 0:
+		b, l = str2bucket(unparsed, group_type=group_type)
+		if l:
+			buckets += b
+			unparsed = unparsed[l:]
+		else:
+			h,name,r = get_token(unparsed)
+			if not name or name == "@bucket":
+				unparsed = r
+			else:
+				break
+	
+	assert not unparsed, unparsed
+
+	return struct.pack("!BBHIHBxI",
+		4, OFPT_GROUP_MOD, 16+len(buckets), xid,
+		command, group_type, group_id) + buckets
+
+def group2str(msg):
+	(hv, ht, hl, xid,
+	command, group_type, group_id) = struct.unpack_from("!BBHIHBxI", msg)
+	
+	if group_id == OFPG_ALL:
+		ret = ["group=all"]
+	elif group_id == OFPG_ANY:
+		ret = []
+	else:
+		ret = ["group={:d}".format(group_id)]
+	
+	ret.append(ofpgt[group_type])
+	
+	bin = msg[16:]
+	while len(bin) > 16:
+		(l,) = struct.unpack_from("!H", bin)
+		ret += ["@bucket",
+			bucket2str(bin[:l], group_type=group_type)]
+		bin = bin[l:]
+	
+	return ",".join(ret)
+
+def group2extra(msg):
+	(hdr_version, hdr_type, hdr_length, hdr_xid,
+	command,
+	group_type,
+	group_id) = struct.unpack_from("!BBHIHBxI", msg)
+	
+	assert hdr_type == OFPT_GROUP_MOD
+	
+	ret = dict(xid=hdr_xid, group_id=group_id)
+	if command != OFPGC_ADD:
+		ret["command"] = command
+	return ret
+
+
+# OFPMP_FLOW / OFPT_MULTIPART_*
+
+def text2mpflow(txt, type=OFPT_MULTIPART_REPLY, xid=0):
+	def parse(s):
+		ret = {}
+		while len(s) > 0:
+			h,name,r = get_token(s)
+			if name not in ("packet_count", "byte_count", "duration_sec", "duration_nsec"):
+				break
+			
+			op,payload,s = get_token(r)
+			assert op.find("=")>=0 and payload.find("/")<0
+			num,l = parseInt(payload)
+			assert l == len(payload)
+			ret[name] = num
+		
+		ret.update(str2dict(s))
+		return ret
+	
+	rules = [parse(s) for s in txt.split("\n")]
+	
 	if type!=OFPT_MULTIPART_REPLY and not rules:
 		rules = [{}]
 	
-	msgs = []
+	msgs = b""
 	capture = b""
-	for rule in rules:
-		info = dict(rule)
-		info.update(str2dict(info.pop("flow", "")))
-		
+	for info in rules:
 		oxm = info["match"]
 		length = 4 + len(oxm)
 		match = struct.pack("!HH", OFPMT_OXM, length) + oxm
@@ -669,19 +799,20 @@ def str2flows(rules, type=OFPT_MULTIPART_REPLY, xid=0):
 			flag = OFPMPF_REPLY_MORE
 			if type==OFPT_MULTIPART_REQUEST:
 				flag = OFPMPF_REQ_MORE
-			msgs.append(struct.pack("!BBHIHH4x",
+			msgs += struct.pack("!BBHIHH4x",
 				4, type, 16+len(capture), xid,
-				OFPMP_FLOW, flag)+capture)
+				OFPMP_FLOW, flag)+capture
 			capture = body
 		else:
 			capture += body
 	
-	msgs.append(struct.pack("!BBHIHH4x",
+	msgs += struct.pack("!BBHIHH4x",
 		4, type, 16+len(capture), xid,
-		OFPMP_FLOW, 0)+capture)
+		OFPMP_FLOW, 0) + capture
+	
 	return msgs
 
-def flows2str(msg):
+def mpflow2text_one(msg):
 	(hdr_version, hdr_type, hdr_length, hdr_xid,
 	mp_type,
 	mp_flags) = struct.unpack_from("!BBHIHH4x", msg)
@@ -716,7 +847,7 @@ def flows2str(msg):
 				ret.append(rstr)
 		else:
 			raise ValueError("match_type {:d} not supported".format(match_type))
-		rules.append(dict(flow=",".join(ret)))
+		rules.append(flow=",".join(ret))
 	else:
 		while len(body) >= 56:
 			(length,
@@ -736,7 +867,7 @@ def flows2str(msg):
 			defaults = dict(
 				cookie = 0,
 				table = 0,
-				priority = 0,
+				priority = 0x8000,
 				idle_timeout = 0,
 				hard_timeout = 0,
 				flags = 0)
@@ -759,89 +890,85 @@ def flows2str(msg):
 			if len(istr):
 				ret.append(istr)
 
-			rules.append(dict(
-				flow=",".join(ret),
-				duration_sec=duration_sec,
-				duration_nsec=duration_nsec,
-				packet_count=packet_count,
-				byte_count=byte_count))
+			c = []
+			L = locals()
+			for name in ("packet_count", "byte_count", "duration_sec", "duration_nsec"):
+				if L[name]:
+					c.append("{:s}={:d}".format(name, L[name]))
+			
+			rules.append(" ".join([",".join(x) for x in [c, ret] if x]))
 			body = body[length:]
 	return rules
 
-def flows2extra(msg):
-	(hdr_version, hdr_type, hdr_length, hdr_xid,
-	mp_type,
-	mp_flags) = struct.unpack_from("!BBHIHH4x", msg)
-	
-	assert mp_type == OFPMP_FLOW, "OFPMP_FLOW required"
-	
-	ret = dict(xid=hdr_xid)
-	if hdr_type != OFPT_MULTIPART_REPLY:
-		ret["type"] = hdr_type
-	
-	if mp_flags != 0:
-		ret["flags"] = mp_flags
-	
-	return ret
+def mpflow2text(msgs):
+	rows = []
+	while msgs:
+		(hv, ht, hl, xid) = struct.unpack_from("!BBHI", msgs)
+		rows += mpflow2text_one(msgs[:hl])
+		msgs = msgs[hl:]
+	return "\n".join(rows)
 
-def str2group(buckets, command=OFPGC_ADD, group_type=OFPGT_ALL, group_id=0, xid=0):
-	body = str2buckets(buckets, group_type=group_type)
-	return struct.pack("!BBHIHBxI",
-		4, OFPT_GROUP_MOD, 16+len(body), xid,
-		command, group_type, group_id) + body
 
-def group2str(msg):
-	(hdr_version, hdr_type, hdr_length, hdr_xid,
-	command,
-	group_type,
-	group_id) = struct.unpack_from("!BBHIHBxI", msg)
-	assert hdr_type == OFPT_GROUP_MOD
-	return buckets2str(msg[16:hdr_length], group_type)
+# OFPMP_GROUP_DESC / OFPT_MULTIPART_*
 
-def group2extra(msg):
-	(hdr_version, hdr_type, hdr_length, hdr_xid,
-	command,
-	group_type,
-	group_id) = struct.unpack_from("!BBHIHBxI", msg)
-	
-	assert hdr_type == OFPT_GROUP_MOD
-	
-	ret = dict(xid=hdr_xid, group_id=group_id)
-	if command != OFPGC_ADD:
-		ret["command"] = command
-	if group_type != OFPGT_ALL:
-		ret["group_type"] = group_type
-	return ret
-
-def str2groups_desc(groups, type=OFPT_MULTIPART_REPLY, xid=0):
+def text2mpgroupdesc(txt, type=OFPT_MULTIPART_REPLY, xid=0):
 	if type != OFPT_MULTIPART_REPLY:
-		return [struct.pack("!BBHIHH4x",
-			4, type, 16, xid, OFPMP_GROUP_DESC, 0)]
+		return struct.pack("!BBHIHH4x",
+			4, type, 16, xid, OFPMP_GROUP_DESC, 0)
 	
-	msgs = []
+	msgs = b""
 	capture = b""
-	for g in groups:
-		bs = str2buckets(g.get("buckets", []),
-			group_type=g.get("group_type", OFPGT_ALL))
+	for s in txt.split("\n"):
+		group_id = 0
+		group_type = OFPGT_ALL
+		
+		ret = {}
+		while len(s) > 0:
+			h,name,r = get_token(s)
+			if name == "group":
+				op,payload,s = get_token(r)
+				assert op.find("=")>=0 and payload.find("/")<0
+				num,l = parseInt(payload)
+				assert l == len(payload)
+				group_id = num
+			elif name.lower() in ofpgt:
+				group_type = ofpgt.index(name.lower())
+				s = r
+			else:
+				break
+		
+		bs = b""
+		while len(s) > 0:
+			h,name,r = get_token(s)
+			if name == "@bucket":
+				s = r
+				continue
+			
+			b,l = str2bucket(s, group_type=group_type)
+			if l:
+				s = s[l:]
+				bs += b
+			else:
+				break
+		
 		body = struct.pack("!HBxI",
-			8+len(bs),
-			g.get("group_type", OFPGT_ALL),
-			g.get("group_id", 0)) + bs
+			8+len(bs), group_type, group_id) + bs
+		
 		if len(body)+len(capture) > 0xffff - 16:
-			msgs.append(struct.pack("!BBHIHH4x",
+			msgs += struct.pack("!BBHIHH4x",
 				4, type, 16+len(capture), xid,
 				OFPMP_GROUP_DESC,
-				OFPMPF_REPLY_MORE)+capture)
+				OFPMPF_REPLY_MORE)+capture
 			capture = body
 		else:
 			capture += body
-	msgs.append(struct.pack("!BBHIHH4x",
+	msgs += struct.pack("!BBHIHH4x",
 		4, type, 16+len(capture), xid,
 		OFPMP_GROUP_DESC,
-		0)+capture)
+		0) + capture
 	return msgs
 
-def groups_desc2str(msg):
+def mpgroupdesc2text_one(msg):
 	(hdr_version, hdr_type, hdr_length, hdr_xid,
 	mp_type,
 	mp_flags) = struct.unpack_from("!BBHIHH4x", msg)
@@ -856,24 +983,162 @@ def groups_desc2str(msg):
 	while len(r) >= 8:
 		(length, group_type, group_id) = struct.unpack_from("!HBxI", r)
 		assert length>=8
-		group = dict(
-			group_id=group_id,
-			buckets=buckets2str(r[8:length], group_type=group_type))
-		if group_type != OFPGT_ALL:
-			group["group_type"] = group_type
-		groups.append(group)
+		
+		ret = ["group={:d}".format(group_id),
+			ofpgt[group_type]]
+		bin = r[8:length]
+		while len(bin) >= 16:
+			(l,) = struct.unpack_from("!H", bin)
+			ret += ["@bucket",
+				bucket2str(bin[:l], group_type=group_type)]
+			bin = bin[l:]
+		
+		groups.append(",".join(ret))
 		r = r[length:]
 	
 	return groups
 
-def groups_desc2extra(msg):
+def mpgroupdesc2text(msgs):
+	rows = []
+	while msgs:
+		(hv, ht, hl, xid) = struct.unpack_from("!BBHI", msgs)
+		rows += mpgroupdesc2text_one(msgs[:hl])
+		msgs = msgs[hl:]
+	return "\n".join(rows)
+
+
+
+# OFPMP_GROUP / OFPT_MULTIPART_*
+
+def text2mpgroup(txt, type=OFPT_MULTIPART_REPLY, xid=0):
+	msgs = b""
+	capture = b""
+	for s in txt.split("\n"):
+		group_id = 0
+		
+		while len(s) > 0:
+			h,name,r = get_token(s)
+			if name == "group":
+				op,payload,s = get_token(r)
+				assert op.find("=")>=0 and payload.find("/")<0
+				num,l = parseInt(payload)
+				assert l == len(payload)
+				
+				group_id = num
+			else:
+				break
+		
+		if type != OFPT_MULTIPART_REPLY:
+			capture = struct.pack("!I4x", group_id)
+			break
+		
+		group = {}
+		buckets = []
+		while len(s) > 0:
+			h,name,r = get_token(s)
+			if name == "@bucket":
+				buckets.append({})
+				s = r
+				continue
+			
+			op,payload,s = get_token(r)
+			assert op.find("=")>=0 and payload.find("/")<0
+			num,l = parseInt(payload)
+			assert l == len(payload)
+			
+			if buckets:
+				if name in ("packet_count", "byte_count"):
+					buckets[-1][name] = num
+				else:
+					break
+			elif name in ("ref_count", "packet_count", "byte_count", "duration_sec", "duration_nsec"):
+				group[name] = num
+			else:
+				break
+		
+		bs = b"".join([struct.pack("!QQ",
+			b.get("packet_count", 0), b.get("byte_count", 0)) for b in buckets])
+		
+		body = struct.pack("!H2xII4xQQII",
+			40+len(bs), group_id,
+			group.get("ref_count", 0),
+			group.get("packet_count", 0),
+			group.get("byte_count", 0),
+			group.get("duration_sec", 0),
+			group.get("duration_nsec", 0)) + bs
+		
+		if len(body)+len(capture) > 0xffff - 16:
+			msgs += struct.pack("!BBHIHH4x",
+				4, type, 16+len(capture), xid,
+				OFPMP_GROUP,
+				OFPMPF_REPLY_MORE) + capture
+			capture = body
+		else:
+			capture += body
+	msgs += struct.pack("!BBHIHH4x",
+		4, type, 16+len(capture), xid,
+		OFPMP_GROUP,
+		0) + capture
+	return msgs
+
+def mpgroup2text_one(msg):
 	(hdr_version, hdr_type, hdr_length, hdr_xid,
 	mp_type,
 	mp_flags) = struct.unpack_from("!BBHIHH4x", msg)
 	
-	assert mp_type == OFPMP_GROUP_DESC, "OFPMP_GROUP_DESC required"
+	assert mp_type == OFPMP_GROUP, "OFPMP_GROUP required"
 	
-	ret = dict(xid=hdr_xid)
 	if hdr_type != OFPT_MULTIPART_REPLY:
-		ret["type"] = hdr_type
-	return ret
+		(group_id,) = struct.unpack_from("!I4x", msg, 16)
+		if group_id == OFPG_ALL:
+			return [] # default
+		elif group_id == OFPG_ANY:
+			return ["group=any"]
+		else:
+			return ["group={:d}".format(group_id)]
+	
+	groups = []
+	r = msg[16:hdr_length]
+	
+	while len(r) >= 40:
+		(length, group_id, ref_count,
+		packet_count, byte_count,
+		duration_sec, duration_nsec) = struct.unpack_from("!H2xII4xQQII", r)
+		assert length>=40
+		
+		group = []
+		L = locals()
+		for k in ("ref_count", "packet_count", "byte_count",
+				"duration_sec", "duration_nsec"):
+			if L[k]:
+				group.append("{:s}={:d}".format(k, L[k]))
+		
+		bs = r[40:length]
+		while len(bs) >= 16:
+			group.append("@bucket")
+			(pc,bc) = struct.unpack_from("!QQ", bs)
+			if pc != 0:
+				group.append("packet_count={:d}".format(pc))
+			if bc != 0:
+				group.append("byte_count={:d}".format(bc))
+			bs = bs[16:]
+		
+		stat = ",".join(group)
+		if group_id == OFPG_ALL:
+			groups.append("group=all " + stat)
+		elif group_id == OFPG_ANY:
+			groups.append(stat)
+		else:
+			groups.append("group={:d} ".format(group_id) + stat)
+
+		r = r[length:]
+	
+	return groups
+
+def mpgroup2text(msgs):
+	rows = []
+	while msgs:
+		(hv, ht, hl, xid) = struct.unpack_from("!BBHI", msgs)
+		rows += mpgroup2text_one(msgs[:hl])
+		msgs = msgs[hl:]
+	return "\n".join(rows)
